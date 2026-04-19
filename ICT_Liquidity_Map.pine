@@ -107,6 +107,7 @@ method update(LevelGroup self, bool is_high, bool show) =>
             self.prices.remove(i)
             self.lines.remove(i)
             self.labels.remove(i)
+            i  // both branches return int — fixes CE10235
         else
             self.lines.get(i).set_x2(bar_index)
             self.labels.get(i).set_x(bar_index + lbl_off)
