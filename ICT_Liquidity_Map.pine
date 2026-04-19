@@ -61,9 +61,13 @@ f_lbsz(string s) =>
 // ════════════════════════════════════════════════════════════════
 
 type LevelGroup
-    array<float> prices = array.new<float>()
-    array<line>  lines  = array.new<line>()
-    array<label> labels = array.new<label>()
+    array<float> prices = na
+    array<line>  lines  = na
+    array<label> labels = na
+
+// Factory — arrays cannot be initialised inside the type block (CE10133)
+f_new_group() =>
+    LevelGroup.new(array.new<float>(), array.new<line>(), array.new<label>())
 
 // Add a new level; no-op on duplicates within REH/REL tolerance
 method add(LevelGroup self, float price, string txt, color col, string lstyle) =>
@@ -141,10 +145,10 @@ method update(LevelGroup self, bool is_high, bool show) =>
 // LEVEL INSTANCES
 // ════════════════════════════════════════════════════════════════
 
-var bsl  = LevelGroup.new()
-var ssl  = LevelGroup.new()
-var mbsl = LevelGroup.new()
-var mssl = LevelGroup.new()
+var bsl  = f_new_group()
+var ssl  = f_new_group()
+var mbsl = f_new_group()
+var mssl = f_new_group()
 
 // ════════════════════════════════════════════════════════════════
 // REH / REL LABEL BUILDERS
