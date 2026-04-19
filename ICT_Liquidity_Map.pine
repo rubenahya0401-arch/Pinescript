@@ -1,0 +1,313 @@
+//@version=5
+indicator("ICT Liquidity Map", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ════════════════════════════════════════════════════════════════
+// INPUTS
+// ════════════════════════════════════════════════════════════════
+
+// ── Visibility ──────────────────────────────────────────────────
+show_bsl  = input.bool(true,  "BSL  — Buy Side Liquidity",      group="Visibility")
+show_ssl  = input.bool(true,  "SSL  — Sell Side Liquidity",     group="Visibility")
+show_mbsl = input.bool(true,  "MBSL — Minor Buy Side (M1/M15)", group="Visibility")
+show_mssl = input.bool(true,  "MSSL — Minor Sell Side (M1/M15)",group="Visibility")
+show_pdhl = input.bool(true,  "PDH / PDL — Prev Day Hi/Lo",     group="Visibility")
+show_wkhl = input.bool(false, "PWH / PWL — Prev Week Hi/Lo",    group="Visibility")
+show_tf   = input.bool(true,  "Show Timeframe Tag in Labels",   group="Visibility")
+
+// ── Swing Settings ──────────────────────────────────────────────
+reh_tol = input.float(0.05, "REH/REL Tolerance (%)",
+     minval=0.0, maxval=2.0, step=0.01, group="Swing Settings",
+     tooltip="Two swing levels within this % of each other are labelled REH or REL")
+max_lvl = input.int(8, "Max Levels Per Type", minval=2, maxval=25, group="Swing Settings",
+     tooltip="Oldest level is removed when this limit is reached")
+
+// ── Lines & Labels ──────────────────────────────────────────────
+lw       = input.int(1, "Line Width", minval=1, maxval=4, group="Lines & Labels")
+ls_major = input.string("Dashed", "BSL / SSL Style",
+     options=["Solid","Dashed","Dotted"], group="Lines & Labels")
+ls_minor = input.string("Dotted", "MBSL / MSSL Style",
+     options=["Solid","Dashed","Dotted"], group="Lines & Labels")
+ls_daily = input.string("Solid",  "PDH / PDL / PWH / PWL Style",
+     options=["Solid","Dashed","Dotted"], group="Lines & Labels")
+lb_sz    = input.string("Small", "Label Size",
+     options=["Tiny","Small","Normal","Large"], group="Lines & Labels")
+lbl_off  = input.int(0, "Label Offset (bars right of line end)",
+     minval=0, maxval=20, group="Lines & Labels",
+     tooltip="0 = label sits exactly at line end (interrupted effect)")
+
+// ── Colors ──────────────────────────────────────────────────────
+col_bsl  = input.color(#00BCD4, "BSL",  group="Colors", inline="r1")
+col_ssl  = input.color(#FF5252, "SSL",  group="Colors", inline="r1")
+col_mbsl = input.color(#4DD0E1, "MBSL", group="Colors", inline="r2")
+col_mssl = input.color(#FF8A80, "MSSL", group="Colors", inline="r2")
+col_pdh  = input.color(#FFD700, "PDH",  group="Colors", inline="r3")
+col_pdl  = input.color(#FFA500, "PDL",  group="Colors", inline="r3")
+col_wkh  = input.color(#E040FB, "PWH",  group="Colors", inline="r4")
+col_wkl  = input.color(#AB47BC, "PWL",  group="Colors", inline="r4")
+
+// ════════════════════════════════════════════════════════════════
+// HELPERS
+// ════════════════════════════════════════════════════════════════
+
+f_lstyle(s) =>
+    s == "Dashed" ? line.style_dashed : s == "Dotted" ? line.style_dotted : line.style_solid
+
+f_lbsz(s) =>
+    s == "Tiny" ? size.tiny : s == "Normal" ? size.normal : s == "Large" ? size.large : size.small
+
+// ════════════════════════════════════════════════════════════════
+// MTF SECURITY REQUESTS  (non-repainting: lookahead_off)
+// ta.pivothigh(high,1,1) → pivot confirmed 1 bar after the peak
+// ════════════════════════════════════════════════════════════════
+
+[m1_sh,  m1_sl]  = request.security(syminfo.tickerid, "1",
+     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)],
+     lookahead=barmerge.lookahead_off)
+
+[m15_sh, m15_sl] = request.security(syminfo.tickerid, "15",
+     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)],
+     lookahead=barmerge.lookahead_off)
+
+[h1_sh,  h1_sl]  = request.security(syminfo.tickerid, "60",
+     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)],
+     lookahead=barmerge.lookahead_off)
+
+[h4_sh,  h4_sl]  = request.security(syminfo.tickerid, "240",
+     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)],
+     lookahead=barmerge.lookahead_off)
+
+// Previous day/week reference prices (confirmed close, no lookahead repainting)
+[d_hi_p, d_lo_p] = request.security(syminfo.tickerid, "D",
+     [high[1], low[1]], lookahead=barmerge.lookahead_on)
+
+[w_hi_p, w_lo_p] = request.security(syminfo.tickerid, "W",
+     [high[1], low[1]], lookahead=barmerge.lookahead_on)
+
+// ════════════════════════════════════════════════════════════════
+// LEVEL ARRAYS  (price · line object · label object per type)
+// ════════════════════════════════════════════════════════════════
+
+var bsl_p   = array.new_float(0)
+var bsl_l   = array.new_line(0)
+var bsl_lb  = array.new_label(0)
+
+var ssl_p   = array.new_float(0)
+var ssl_l   = array.new_line(0)
+var ssl_lb  = array.new_label(0)
+
+var mbsl_p  = array.new_float(0)
+var mbsl_l  = array.new_line(0)
+var mbsl_lb = array.new_label(0)
+
+var mssl_p  = array.new_float(0)
+var mssl_l  = array.new_line(0)
+var mssl_lb = array.new_label(0)
+
+// ════════════════════════════════════════════════════════════════
+// CORE FUNCTIONS
+// ════════════════════════════════════════════════════════════════
+
+// Returns true when 'price' already exists in p_arr within tolerance
+f_is_dup(price, p_arr) =>
+    dup = false
+    tol = price * reh_tol / 100.0
+    sz  = array.size(p_arr)
+    if sz > 0
+        for i = 0 to sz - 1
+            if math.abs(array.get(p_arr, i) - price) <= tol
+                dup := true
+                break
+    dup
+
+// Add a new level; evicts oldest when cap is reached
+f_add(price, txt, col, lstyle, p_arr, l_arr, lb_arr) =>
+    if not f_is_dup(price, p_arr)
+        if array.size(p_arr) >= max_lvl
+            line.delete(array.shift(l_arr))
+            label.delete(array.shift(lb_arr))
+            array.shift(p_arr)
+
+        // Line starts and ends at current bar; x2 is extended in f_update each bar
+        ln  = line.new(bar_index, price, bar_index, price,
+             color=col, style=lstyle, width=lw)
+
+        // Label sits at line end — creates the "interrupted at label" effect
+        lbl = label.new(bar_index + lbl_off, price, txt,
+             color=color.new(col, 78), textcolor=col,
+             style=label.style_label_left, size=f_lbsz(lb_sz))
+
+        array.push(p_arr,  price)
+        array.push(l_arr,  ln)
+        array.push(lb_arr, lbl)
+
+// Update every bar: extend lines, move labels, remove swept levels
+// is_high=true  → BSL/MBSL (swept when high >= level)
+// is_high=false → SSL/MSSL (swept when low  <= level)
+f_update(p_arr, l_arr, lb_arr, is_high, show) =>
+    i = 0
+    while i < array.size(p_arr)
+        price = array.get(p_arr, i)
+        swept = is_high ? high >= price : low <= price
+        if not show or swept
+            line.delete(array.get(l_arr, i))
+            label.delete(array.get(lb_arr, i))
+            array.remove(p_arr,  i)
+            array.remove(l_arr,  i)
+            array.remove(lb_arr, i)
+        else
+            line.set_x2(array.get(l_arr, i),  bar_index)
+            label.set_x(array.get(lb_arr, i), bar_index + lbl_off)
+            i += 1
+
+// ════════════════════════════════════════════════════════════════
+// REH / REL LABEL BUILDERS
+// Compare new swing to the last tracked swing of its type
+// ════════════════════════════════════════════════════════════════
+
+var float last_bsl_p  = na
+var float last_ssl_p  = na
+var float last_mbsl_p = na
+var float last_mssl_p = na
+
+f_bsl_lbl(price, tf) =>
+    tol = price * reh_tol / 100.0
+    reh = not na(last_bsl_p) and math.abs(price - last_bsl_p) <= tol
+    show_tf ? (reh ? "REH BSL " + tf : "BSL " + tf) : (reh ? "REH BSL" : "BSL")
+
+f_ssl_lbl(price, tf) =>
+    tol = price * reh_tol / 100.0
+    rel = not na(last_ssl_p) and math.abs(price - last_ssl_p) <= tol
+    show_tf ? (rel ? "REL SSL " + tf : "SSL " + tf) : (rel ? "REL SSL" : "SSL")
+
+f_mbsl_lbl(price, tf) =>
+    tol = price * reh_tol / 100.0
+    reh = not na(last_mbsl_p) and math.abs(price - last_mbsl_p) <= tol
+    show_tf ? (reh ? "REH MBSL " + tf : "MBSL " + tf) : (reh ? "REH MBSL" : "MBSL")
+
+f_mssl_lbl(price, tf) =>
+    tol = price * reh_tol / 100.0
+    rel = not na(last_mssl_p) and math.abs(price - last_mssl_p) <= tol
+    show_tf ? (rel ? "REL MSSL " + tf : "MSSL " + tf) : (rel ? "REL MSSL" : "MSSL")
+
+// ════════════════════════════════════════════════════════════════
+// MAIN DETECTION  (confirmed bars only → non-repainting)
+// ════════════════════════════════════════════════════════════════
+
+if barstate.isconfirmed
+    maj = f_lstyle(ls_major)
+    min = f_lstyle(ls_minor)
+
+    // ── BSL: H1 pivot highs ────────────────────────────────────
+    if show_bsl and not na(h1_sh)
+        f_add(h1_sh, f_bsl_lbl(h1_sh, "H1"), col_bsl, maj, bsl_p, bsl_l, bsl_lb)
+        last_bsl_p := h1_sh
+
+    // ── BSL: H4 pivot highs ────────────────────────────────────
+    if show_bsl and not na(h4_sh)
+        f_add(h4_sh, f_bsl_lbl(h4_sh, "H4"), col_bsl, maj, bsl_p, bsl_l, bsl_lb)
+        last_bsl_p := h4_sh
+
+    // ── SSL: H1 pivot lows ─────────────────────────────────────
+    if show_ssl and not na(h1_sl)
+        f_add(h1_sl, f_ssl_lbl(h1_sl, "H1"), col_ssl, maj, ssl_p, ssl_l, ssl_lb)
+        last_ssl_p := h1_sl
+
+    // ── SSL: H4 pivot lows ─────────────────────────────────────
+    if show_ssl and not na(h4_sl)
+        f_add(h4_sl, f_ssl_lbl(h4_sl, "H4"), col_ssl, maj, ssl_p, ssl_l, ssl_lb)
+        last_ssl_p := h4_sl
+
+    // ── MBSL: M1 pivot highs ───────────────────────────────────
+    if show_mbsl and not na(m1_sh)
+        f_add(m1_sh, f_mbsl_lbl(m1_sh, "M1"), col_mbsl, min, mbsl_p, mbsl_l, mbsl_lb)
+        last_mbsl_p := m1_sh
+
+    // ── MBSL: M15 pivot highs ──────────────────────────────────
+    if show_mbsl and not na(m15_sh)
+        f_add(m15_sh, f_mbsl_lbl(m15_sh, "M15"), col_mbsl, min, mbsl_p, mbsl_l, mbsl_lb)
+        last_mbsl_p := m15_sh
+
+    // ── MSSL: M1 pivot lows ────────────────────────────────────
+    if show_mssl and not na(m1_sl)
+        f_add(m1_sl, f_mssl_lbl(m1_sl, "M1"), col_mssl, min, mssl_p, mssl_l, mssl_lb)
+        last_mssl_p := m1_sl
+
+    // ── MSSL: M15 pivot lows ───────────────────────────────────
+    if show_mssl and not na(m15_sl)
+        f_add(m15_sl, f_mssl_lbl(m15_sl, "M15"), col_mssl, min, mssl_p, mssl_l, mssl_lb)
+        last_mssl_p := m15_sl
+
+// ════════════════════════════════════════════════════════════════
+// UPDATE ALL LEVELS (every bar)
+// ════════════════════════════════════════════════════════════════
+
+f_update(bsl_p,  bsl_l,  bsl_lb,  true,  show_bsl)
+f_update(ssl_p,  ssl_l,  ssl_lb,  false, show_ssl)
+f_update(mbsl_p, mbsl_l, mbsl_lb, true,  show_mbsl)
+f_update(mssl_p, mssl_l, mssl_lb, false, show_mssl)
+
+// ════════════════════════════════════════════════════════════════
+// PDH / PDL  — Previous Day High/Low
+// ════════════════════════════════════════════════════════════════
+
+var line  pdh_ln  = na
+var line  pdl_ln  = na
+var label pdh_lbl = na
+var label pdl_lbl = na
+
+if show_pdhl
+    is_new_day = ta.change(time("D")) != 0
+    if is_new_day
+        line.delete(pdh_ln)
+        line.delete(pdl_ln)
+        label.delete(pdh_lbl)
+        label.delete(pdl_lbl)
+        pdh_ln  := line.new(bar_index, d_hi_p, bar_index, d_hi_p,
+             color=col_pdh, style=f_lstyle(ls_daily), width=lw)
+        pdl_ln  := line.new(bar_index, d_lo_p, bar_index, d_lo_p,
+             color=col_pdl, style=f_lstyle(ls_daily), width=lw)
+        pdh_lbl := label.new(bar_index + lbl_off, d_hi_p, "PDH",
+             color=color.new(col_pdh, 78), textcolor=col_pdh,
+             style=label.style_label_left, size=f_lbsz(lb_sz))
+        pdl_lbl := label.new(bar_index + lbl_off, d_lo_p, "PDL",
+             color=color.new(col_pdl, 78), textcolor=col_pdl,
+             style=label.style_label_left, size=f_lbsz(lb_sz))
+    if not na(pdh_ln)
+        line.set_x2(pdh_ln,  bar_index)
+        label.set_x(pdh_lbl, bar_index + lbl_off)
+    if not na(pdl_ln)
+        line.set_x2(pdl_ln,  bar_index)
+        label.set_x(pdl_lbl, bar_index + lbl_off)
+
+// ════════════════════════════════════════════════════════════════
+// PWH / PWL  — Previous Week High/Low
+// ════════════════════════════════════════════════════════════════
+
+var line  pwh_ln  = na
+var line  pwl_ln  = na
+var label pwh_lbl = na
+var label pwl_lbl = na
+
+if show_wkhl
+    is_new_week = ta.change(time("W")) != 0
+    if is_new_week
+        line.delete(pwh_ln)
+        line.delete(pwl_ln)
+        label.delete(pwh_lbl)
+        label.delete(pwl_lbl)
+        pwh_ln  := line.new(bar_index, w_hi_p, bar_index, w_hi_p,
+             color=col_wkh, style=line.style_dashed, width=lw)
+        pwl_ln  := line.new(bar_index, w_lo_p, bar_index, w_lo_p,
+             color=col_wkl, style=line.style_dashed, width=lw)
+        pwh_lbl := label.new(bar_index + lbl_off, w_hi_p, "PWH",
+             color=color.new(col_wkh, 78), textcolor=col_wkh,
+             style=label.style_label_left, size=f_lbsz(lb_sz))
+        pwl_lbl := label.new(bar_index + lbl_off, w_lo_p, "PWL",
+             color=color.new(col_wkl, 78), textcolor=col_wkl,
+             style=label.style_label_left, size=f_lbsz(lb_sz))
+    if not na(pwh_ln)
+        line.set_x2(pwh_ln,  bar_index)
+        label.set_x(pwh_lbl, bar_index + lbl_off)
+    if not na(pwl_ln)
+        line.set_x2(pwl_ln,  bar_index)
+        label.set_x(pwl_lbl, bar_index + lbl_off)
