@@ -92,8 +92,9 @@ method add(LevelGroup self, float price, string txt, color col, string lstyle_st
             self.labels.shift().delete()
             self.prices.shift()
         int x2t = time + ext_ms
-        ln  = line.new(time, price, x2t, price,
-             xloc=xloc.bar_time, color=col, style=ls(lstyle_str), width=lw)
+        ln  = line.new(time, price, time + bar_ms, price,
+             xloc=xloc.bar_time, color=col, style=ls(lstyle_str), width=lw,
+             extend=line.extend_right)
         lbl = label.new(x2t, price, txt,
              xloc=xloc.bar_time, color=color.new(col, 78), textcolor=col,
              style=label.style_label_left, size=lbsz(lb_sz))
@@ -121,7 +122,7 @@ method update(LevelGroup self, bool is_high, bool show, color col, string lstyle
             int x2t  = time + ext_ms
             ln_i     = self.lines.get(i)
             lbl_i    = self.labels.get(i)
-            ln_i.set_x2(x2t)
+            // extend_right handles the rightward extension — no set_x2 needed
             ln_i.set_color(col)
             ln_i.set_style(ls(lstyle_str))
             ln_i.set_width(lw)
@@ -253,10 +254,10 @@ if (new_day_d or na(pdh_ln)) and not na(d_hi_p)
     pdl_ln.delete()
     pdh_lbl.delete()
     pdl_lbl.delete()
-    pdh_ln  := line.new(time, d_hi_p, time + ext_ms, d_hi_p,
-         xloc=xloc.bar_time, color=na, width=1)
-    pdl_ln  := line.new(time, d_lo_p, time + ext_ms, d_lo_p,
-         xloc=xloc.bar_time, color=na, width=1)
+    pdh_ln  := line.new(time, d_hi_p, time + bar_ms, d_hi_p,
+         xloc=xloc.bar_time, color=na, width=1, extend=line.extend_right)
+    pdl_ln  := line.new(time, d_lo_p, time + bar_ms, d_lo_p,
+         xloc=xloc.bar_time, color=na, width=1, extend=line.extend_right)
     pdh_lbl := label.new(time + ext_ms, d_hi_p, "PDH",
          xloc=xloc.bar_time, color=na, textcolor=na, size=size.small)
     pdl_lbl := label.new(time + ext_ms, d_lo_p, "PDL",
@@ -264,7 +265,6 @@ if (new_day_d or na(pdh_ln)) and not na(d_hi_p)
 
 if not na(pdh_ln)
     int x2t = time + ext_ms
-    pdh_ln.set_x2(x2t)
     pdh_ln.set_color(show_pdhl ? col_pdh : na)
     pdh_ln.set_style(ls(ls_daily))
     pdh_ln.set_width(show_pdhl ? lw : 0)
@@ -276,7 +276,6 @@ if not na(pdh_ln)
 
 if not na(pdl_ln)
     int x2t = time + ext_ms
-    pdl_ln.set_x2(x2t)
     pdl_ln.set_color(show_pdhl ? col_pdl : na)
     pdl_ln.set_style(ls(ls_daily))
     pdl_ln.set_width(show_pdhl ? lw : 0)
@@ -302,10 +301,10 @@ if (new_week_w or na(pwh_ln)) and not na(w_hi_p)
     pwl_ln.delete()
     pwh_lbl.delete()
     pwl_lbl.delete()
-    pwh_ln  := line.new(time, w_hi_p, time + ext_ms, w_hi_p,
-         xloc=xloc.bar_time, color=na, width=1)
-    pwl_ln  := line.new(time, w_lo_p, time + ext_ms, w_lo_p,
-         xloc=xloc.bar_time, color=na, width=1)
+    pwh_ln  := line.new(time, w_hi_p, time + bar_ms, w_hi_p,
+         xloc=xloc.bar_time, color=na, width=1, extend=line.extend_right)
+    pwl_ln  := line.new(time, w_lo_p, time + bar_ms, w_lo_p,
+         xloc=xloc.bar_time, color=na, width=1, extend=line.extend_right)
     pwh_lbl := label.new(time + ext_ms, w_hi_p, "PWH",
          xloc=xloc.bar_time, color=na, textcolor=na, size=size.small)
     pwl_lbl := label.new(time + ext_ms, w_lo_p, "PWL",
@@ -313,7 +312,6 @@ if (new_week_w or na(pwh_ln)) and not na(w_hi_p)
 
 if not na(pwh_ln)
     int x2t = time + ext_ms
-    pwh_ln.set_x2(x2t)
     pwh_ln.set_color(show_wkhl ? col_wkh : na)
     pwh_ln.set_style(line.style_dashed)
     pwh_ln.set_width(show_wkhl ? lw : 0)
@@ -325,7 +323,6 @@ if not na(pwh_ln)
 
 if not na(pwl_ln)
     int x2t = time + ext_ms
-    pwl_ln.set_x2(x2t)
     pwl_ln.set_color(show_wkhl ? col_wkl : na)
     pwl_ln.set_style(line.style_dashed)
     pwl_ln.set_width(show_wkhl ? lw : 0)
