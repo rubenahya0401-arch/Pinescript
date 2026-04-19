@@ -1,3 +1,6 @@
+// MIT License — Copyright (c) 2026 traderdiegox
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
+
 //@version=6
 indicator("ICT Liquidity Map", overlay=true, max_lines_count=500, max_labels_count=500)
 
@@ -12,28 +15,28 @@ show_mbsl = input.bool(true,  "MBSL — Minor Buy Side (M1/M15)",  group="Visibi
 show_mssl = input.bool(true,  "MSSL — Minor Sell Side (M1/M15)", group="Visibility")
 show_pdhl = input.bool(true,  "PDH / PDL — Prev Day Hi/Lo",      group="Visibility")
 show_wkhl = input.bool(false, "PWH / PWL — Prev Week Hi/Lo",     group="Visibility")
-show_tf   = input.bool(true,  "Show Timeframe Tag in Labels",    group="Visibility")
+show_tf   = input.bool(true,  "Show TF Tag in Labels",           group="Visibility")
 
 // ── Swing Settings ──────────────────────────────────────────────
-reh_tol = input.float(0.05, "REH/REL Tolerance (%)",
+reh_tol = input.float(0.05, "REH / REL Tolerance (%)",
      minval=0.0, maxval=2.0, step=0.01, group="Swing Settings",
      tooltip="Two swing levels within this % of each other are labelled REH or REL")
 max_lvl = input.int(8, "Max Levels Per Type", minval=2, maxval=25, group="Swing Settings",
-     tooltip="Oldest level is removed when this limit is reached")
+     tooltip="Oldest level removed when limit is reached")
 
 // ── Lines & Labels ──────────────────────────────────────────────
-lw       = input.int(1, "Line Width", minval=1, maxval=4, group="Lines & Labels")
-ls_major = input.string("Dashed", "BSL / SSL Style",
+lw          = input.int(1,    "Line Width",    minval=1, maxval=4,     group="Lines & Labels")
+ls_major    = input.string("Dashed", "BSL / SSL Style",
      options=["Solid","Dashed","Dotted"], group="Lines & Labels")
-ls_minor = input.string("Dotted", "MBSL / MSSL Style",
+ls_minor    = input.string("Dotted", "MBSL / MSSL Style",
      options=["Solid","Dashed","Dotted"], group="Lines & Labels")
-ls_daily = input.string("Solid",  "PDH / PDL / PWH / PWL Style",
+ls_daily    = input.string("Solid",  "PDH / PDL / PWH / PWL Style",
      options=["Solid","Dashed","Dotted"], group="Lines & Labels")
-lb_sz    = input.string("Small", "Label Size",
+lb_sz       = input.string("Small",  "Label Size",
      options=["Tiny","Small","Normal","Large"], group="Lines & Labels")
-lbl_off  = input.int(0, "Label Offset (bars right of line end)",
-     minval=0, maxval=20, group="Lines & Labels",
-     tooltip="0 = label sits exactly at line end (interrupted effect)")
+extend_bars = input.int(8, "Extension (bars right)",
+     minval=0, maxval=500, group="Lines & Labels",
+     tooltip="Lines and labels extend this many bars to the right of the current bar")
 
 // ── Colors ──────────────────────────────────────────────────────
 col_bsl  = input.color(#00BCD4, "BSL",  group="Colors", inline="r1")
@@ -49,15 +52,19 @@ col_wkl  = input.color(#AB47BC, "PWL",  group="Colors", inline="r4")
 // HELPERS
 // ════════════════════════════════════════════════════════════════
 
-f_lstyle(string s) =>
+// Time-based extension — lines stay anchored to timestamps,
+// so they scroll correctly with the chart (xloc.bar_time pattern).
+int bar_ms = int(timeframe.in_seconds() * 1000)
+int ext_ms = extend_bars * bar_ms
+
+ls(string s) =>
     s == "Dashed" ? line.style_dashed : s == "Dotted" ? line.style_dotted : line.style_solid
 
-f_lbsz(string s) =>
+lbsz(string s) =>
     s == "Tiny" ? size.tiny : s == "Normal" ? size.normal : s == "Large" ? size.large : size.small
 
 // ════════════════════════════════════════════════════════════════
 // USER-DEFINED TYPE — LevelGroup
-// Encapsulates prices · lines · labels for one liquidity class
 // ════════════════════════════════════════════════════════════════
 
 type LevelGroup
@@ -65,12 +72,12 @@ type LevelGroup
     array<line>  lines  = na
     array<label> labels = na
 
-// Factory — arrays cannot be initialised inside the type block (CE10133)
+// Arrays cannot be initialised inside a type block (CE10133)
 f_new_group() =>
     LevelGroup.new(array.new<float>(), array.new<line>(), array.new<label>())
 
-// Add a new level; no-op on duplicates within REH/REL tolerance
-method add(LevelGroup self, float price, string txt, color col, string lstyle) =>
+// Add level — no-op if a duplicate exists within REH/REL tolerance
+method add(LevelGroup self, float price, string txt, color col, string lstyle_str) =>
     tol = price * reh_tol / 100.0
     dup = false
     sz  = self.prices.size()
@@ -84,19 +91,21 @@ method add(LevelGroup self, float price, string txt, color col, string lstyle) =
             self.lines.shift().delete()
             self.labels.shift().delete()
             self.prices.shift()
-        ln  = line.new(bar_index, price, bar_index, price,
-             color=col, style=lstyle, width=lw)
-        lbl = label.new(bar_index + lbl_off, price, txt,
-             color=color.new(col, 78), textcolor=col,
-             style=label.style_label_left, size=f_lbsz(lb_sz))
+        int x2t = time + ext_ms
+        ln  = line.new(time, price, x2t, price,
+             xloc=xloc.bar_time, color=col, style=ls(lstyle_str), width=lw)
+        lbl = label.new(x2t, price, txt,
+             xloc=xloc.bar_time, color=color.new(col, 78), textcolor=col,
+             style=label.style_label_left, size=lbsz(lb_sz))
         self.prices.push(price)
         self.lines.push(ln)
         self.labels.push(lbl)
 
-// Extend lines to current bar, reposition labels, remove swept levels.
-// is_high=true  → BSL/MBSL: swept when high >= level price
-// is_high=false → SSL/MSSL: swept when low  <= level price
-method update(LevelGroup self, bool is_high, bool show) =>
+// Update every bar: extend x2, refresh style/colour, remove swept levels.
+// Re-applying style/colour every bar makes toggles and colour changes instant.
+// is_high=true  → BSL/MBSL: swept when high >= level
+// is_high=false → SSL/MSSL: swept when low  <= level
+method update(LevelGroup self, bool is_high, bool show, color col, string lstyle_str) =>
     i = 0
     while i < self.prices.size()
         price = self.prices.get(i)
@@ -107,35 +116,39 @@ method update(LevelGroup self, bool is_high, bool show) =>
             self.prices.remove(i)
             self.lines.remove(i)
             self.labels.remove(i)
-            i  // both branches return int — fixes CE10235
+            i  // keep int return type — fixes CE10235
         else
-            self.lines.get(i).set_x2(bar_index)
-            self.labels.get(i).set_x(bar_index + lbl_off)
+            int x2t  = time + ext_ms
+            ln_i     = self.lines.get(i)
+            lbl_i    = self.labels.get(i)
+            ln_i.set_x2(x2t)
+            ln_i.set_color(col)
+            ln_i.set_style(ls(lstyle_str))
+            ln_i.set_width(lw)
+            lbl_i.set_x(x2t)
+            lbl_i.set_textcolor(col)
+            lbl_i.set_color(color.new(col, 78))
+            lbl_i.set_size(lbsz(lb_sz))
             i += 1
 
 // ════════════════════════════════════════════════════════════════
 // MTF SECURITY REQUESTS  (non-repainting: lookahead_off)
-// ta.pivothigh(high,1,1) → confirmed exactly 1 bar after the pivot
+// ta.pivothigh(high,1,1) → confirmed 1 bar after the pivot
 // ════════════════════════════════════════════════════════════════
 
 [m1_sh,  m1_sl]  = request.security(syminfo.tickerid, "1",
-     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)],
-     lookahead=barmerge.lookahead_off)
+     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)], lookahead=barmerge.lookahead_off)
 
 [m15_sh, m15_sl] = request.security(syminfo.tickerid, "15",
-     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)],
-     lookahead=barmerge.lookahead_off)
+     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)], lookahead=barmerge.lookahead_off)
 
 [h1_sh,  h1_sl]  = request.security(syminfo.tickerid, "60",
-     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)],
-     lookahead=barmerge.lookahead_off)
+     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)], lookahead=barmerge.lookahead_off)
 
 [h4_sh,  h4_sl]  = request.security(syminfo.tickerid, "240",
-     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)],
-     lookahead=barmerge.lookahead_off)
+     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)], lookahead=barmerge.lookahead_off)
 
-// Confirmed previous-bar reference levels (lookahead_on is safe here
-// because we explicitly request high[1]/low[1] — always historical data)
+// lookahead_on is safe here: we explicitly request high[1]/low[1] (confirmed prior bar)
 [d_hi_p, d_lo_p] = request.security(syminfo.tickerid, "D",
      [high[1], low[1]], lookahead=barmerge.lookahead_on)
 
@@ -181,60 +194,51 @@ f_mssl_lbl(float price, string tf) =>
 // ════════════════════════════════════════════════════════════════
 
 if barstate.isconfirmed
-    maj = f_lstyle(ls_major)
-    min = f_lstyle(ls_minor)
-
-    // ── BSL: H1 pivot highs ────────────────────────────────────
     if show_bsl and not na(h1_sh)
-        bsl.add(h1_sh, f_bsl_lbl(h1_sh, "H1"), col_bsl, maj)
+        bsl.add(h1_sh, f_bsl_lbl(h1_sh, "H1"), col_bsl, ls_major)
         last_bsl_p := h1_sh
 
-    // ── BSL: H4 pivot highs ────────────────────────────────────
     if show_bsl and not na(h4_sh)
-        bsl.add(h4_sh, f_bsl_lbl(h4_sh, "H4"), col_bsl, maj)
+        bsl.add(h4_sh, f_bsl_lbl(h4_sh, "H4"), col_bsl, ls_major)
         last_bsl_p := h4_sh
 
-    // ── SSL: H1 pivot lows ─────────────────────────────────────
     if show_ssl and not na(h1_sl)
-        ssl.add(h1_sl, f_ssl_lbl(h1_sl, "H1"), col_ssl, maj)
+        ssl.add(h1_sl, f_ssl_lbl(h1_sl, "H1"), col_ssl, ls_major)
         last_ssl_p := h1_sl
 
-    // ── SSL: H4 pivot lows ─────────────────────────────────────
     if show_ssl and not na(h4_sl)
-        ssl.add(h4_sl, f_ssl_lbl(h4_sl, "H4"), col_ssl, maj)
+        ssl.add(h4_sl, f_ssl_lbl(h4_sl, "H4"), col_ssl, ls_major)
         last_ssl_p := h4_sl
 
-    // ── MBSL: M1 pivot highs ───────────────────────────────────
     if show_mbsl and not na(m1_sh)
-        mbsl.add(m1_sh, f_mbsl_lbl(m1_sh, "M1"), col_mbsl, min)
+        mbsl.add(m1_sh, f_mbsl_lbl(m1_sh, "M1"), col_mbsl, ls_minor)
         last_mbsl_p := m1_sh
 
-    // ── MBSL: M15 pivot highs ──────────────────────────────────
     if show_mbsl and not na(m15_sh)
-        mbsl.add(m15_sh, f_mbsl_lbl(m15_sh, "M15"), col_mbsl, min)
+        mbsl.add(m15_sh, f_mbsl_lbl(m15_sh, "M15"), col_mbsl, ls_minor)
         last_mbsl_p := m15_sh
 
-    // ── MSSL: M1 pivot lows ────────────────────────────────────
     if show_mssl and not na(m1_sl)
-        mssl.add(m1_sl, f_mssl_lbl(m1_sl, "M1"), col_mssl, min)
+        mssl.add(m1_sl, f_mssl_lbl(m1_sl, "M1"), col_mssl, ls_minor)
         last_mssl_p := m1_sl
 
-    // ── MSSL: M15 pivot lows ───────────────────────────────────
     if show_mssl and not na(m15_sl)
-        mssl.add(m15_sl, f_mssl_lbl(m15_sl, "M15"), col_mssl, min)
+        mssl.add(m15_sl, f_mssl_lbl(m15_sl, "M15"), col_mssl, ls_minor)
         last_mssl_p := m15_sl
 
 // ════════════════════════════════════════════════════════════════
 // UPDATE ALL LEVELS (every bar)
 // ════════════════════════════════════════════════════════════════
 
-bsl.update(true,  show_bsl)
-ssl.update(false, show_ssl)
-mbsl.update(true,  show_mbsl)
-mssl.update(false, show_mssl)
+bsl.update(true,  show_bsl,  col_bsl,  ls_major)
+ssl.update(false, show_ssl,  col_ssl,  ls_major)
+mbsl.update(true,  show_mbsl, col_mbsl, ls_minor)
+mssl.update(false, show_mssl, col_mssl, ls_minor)
 
 // ════════════════════════════════════════════════════════════════
-// PDH / PDL  — Previous Day High/Low
+// PDH / PDL  — Previous Day High / Low
+// Lines recreated each new day; all properties refreshed every bar
+// so toggle / colour / style changes apply instantly.
 // ════════════════════════════════════════════════════════════════
 
 var line  pdh_ln  = na
@@ -242,31 +246,48 @@ var line  pdl_ln  = na
 var label pdh_lbl = na
 var label pdl_lbl = na
 
-if show_pdhl
-    if ta.change(time("D")) != 0
-        pdh_ln.delete()
-        pdl_ln.delete()
-        pdh_lbl.delete()
-        pdl_lbl.delete()
-        pdh_ln  := line.new(bar_index, d_hi_p, bar_index, d_hi_p,
-             color=col_pdh, style=f_lstyle(ls_daily), width=lw)
-        pdl_ln  := line.new(bar_index, d_lo_p, bar_index, d_lo_p,
-             color=col_pdl, style=f_lstyle(ls_daily), width=lw)
-        pdh_lbl := label.new(bar_index + lbl_off, d_hi_p, "PDH",
-             color=color.new(col_pdh, 78), textcolor=col_pdh,
-             style=label.style_label_left, size=f_lbsz(lb_sz))
-        pdl_lbl := label.new(bar_index + lbl_off, d_lo_p, "PDL",
-             color=color.new(col_pdl, 78), textcolor=col_pdl,
-             style=label.style_label_left, size=f_lbsz(lb_sz))
-    if not na(pdh_ln)
-        pdh_ln.set_x2(bar_index)
-        pdh_lbl.set_x(bar_index + lbl_off)
-    if not na(pdl_ln)
-        pdl_ln.set_x2(bar_index)
-        pdl_lbl.set_x(bar_index + lbl_off)
+bool new_day_d = ta.change(time("D")) != 0
+
+if (new_day_d or na(pdh_ln)) and not na(d_hi_p)
+    pdh_ln.delete()
+    pdl_ln.delete()
+    pdh_lbl.delete()
+    pdl_lbl.delete()
+    pdh_ln  := line.new(time, d_hi_p, time + ext_ms, d_hi_p,
+         xloc=xloc.bar_time, color=na, width=1)
+    pdl_ln  := line.new(time, d_lo_p, time + ext_ms, d_lo_p,
+         xloc=xloc.bar_time, color=na, width=1)
+    pdh_lbl := label.new(time + ext_ms, d_hi_p, "PDH",
+         xloc=xloc.bar_time, color=na, textcolor=na, size=size.small)
+    pdl_lbl := label.new(time + ext_ms, d_lo_p, "PDL",
+         xloc=xloc.bar_time, color=na, textcolor=na, size=size.small)
+
+if not na(pdh_ln)
+    int x2t = time + ext_ms
+    pdh_ln.set_x2(x2t)
+    pdh_ln.set_color(show_pdhl ? col_pdh : na)
+    pdh_ln.set_style(ls(ls_daily))
+    pdh_ln.set_width(show_pdhl ? lw : 0)
+    pdh_lbl.set_x(x2t)
+    pdh_lbl.set_style(label.style_label_left)
+    pdh_lbl.set_textcolor(show_pdhl ? col_pdh : na)
+    pdh_lbl.set_color(show_pdhl ? color.new(col_pdh, 78) : na)
+    pdh_lbl.set_size(lbsz(lb_sz))
+
+if not na(pdl_ln)
+    int x2t = time + ext_ms
+    pdl_ln.set_x2(x2t)
+    pdl_ln.set_color(show_pdhl ? col_pdl : na)
+    pdl_ln.set_style(ls(ls_daily))
+    pdl_ln.set_width(show_pdhl ? lw : 0)
+    pdl_lbl.set_x(x2t)
+    pdl_lbl.set_style(label.style_label_left)
+    pdl_lbl.set_textcolor(show_pdhl ? col_pdl : na)
+    pdl_lbl.set_color(show_pdhl ? color.new(col_pdl, 78) : na)
+    pdl_lbl.set_size(lbsz(lb_sz))
 
 // ════════════════════════════════════════════════════════════════
-// PWH / PWL  — Previous Week High/Low
+// PWH / PWL  — Previous Week High / Low
 // ════════════════════════════════════════════════════════════════
 
 var line  pwh_ln  = na
@@ -274,25 +295,42 @@ var line  pwl_ln  = na
 var label pwh_lbl = na
 var label pwl_lbl = na
 
-if show_wkhl
-    if ta.change(time("W")) != 0
-        pwh_ln.delete()
-        pwl_ln.delete()
-        pwh_lbl.delete()
-        pwl_lbl.delete()
-        pwh_ln  := line.new(bar_index, w_hi_p, bar_index, w_hi_p,
-             color=col_wkh, style=line.style_dashed, width=lw)
-        pwl_ln  := line.new(bar_index, w_lo_p, bar_index, w_lo_p,
-             color=col_wkl, style=line.style_dashed, width=lw)
-        pwh_lbl := label.new(bar_index + lbl_off, w_hi_p, "PWH",
-             color=color.new(col_wkh, 78), textcolor=col_wkh,
-             style=label.style_label_left, size=f_lbsz(lb_sz))
-        pwl_lbl := label.new(bar_index + lbl_off, w_lo_p, "PWL",
-             color=color.new(col_wkl, 78), textcolor=col_wkl,
-             style=label.style_label_left, size=f_lbsz(lb_sz))
-    if not na(pwh_ln)
-        pwh_ln.set_x2(bar_index)
-        pwh_lbl.set_x(bar_index + lbl_off)
-    if not na(pwl_ln)
-        pwl_ln.set_x2(bar_index)
-        pwl_lbl.set_x(bar_index + lbl_off)
+bool new_week_w = ta.change(time("W")) != 0
+
+if (new_week_w or na(pwh_ln)) and not na(w_hi_p)
+    pwh_ln.delete()
+    pwl_ln.delete()
+    pwh_lbl.delete()
+    pwl_lbl.delete()
+    pwh_ln  := line.new(time, w_hi_p, time + ext_ms, w_hi_p,
+         xloc=xloc.bar_time, color=na, width=1)
+    pwl_ln  := line.new(time, w_lo_p, time + ext_ms, w_lo_p,
+         xloc=xloc.bar_time, color=na, width=1)
+    pwh_lbl := label.new(time + ext_ms, w_hi_p, "PWH",
+         xloc=xloc.bar_time, color=na, textcolor=na, size=size.small)
+    pwl_lbl := label.new(time + ext_ms, w_lo_p, "PWL",
+         xloc=xloc.bar_time, color=na, textcolor=na, size=size.small)
+
+if not na(pwh_ln)
+    int x2t = time + ext_ms
+    pwh_ln.set_x2(x2t)
+    pwh_ln.set_color(show_wkhl ? col_wkh : na)
+    pwh_ln.set_style(line.style_dashed)
+    pwh_ln.set_width(show_wkhl ? lw : 0)
+    pwh_lbl.set_x(x2t)
+    pwh_lbl.set_style(label.style_label_left)
+    pwh_lbl.set_textcolor(show_wkhl ? col_wkh : na)
+    pwh_lbl.set_color(show_wkhl ? color.new(col_wkh, 78) : na)
+    pwh_lbl.set_size(lbsz(lb_sz))
+
+if not na(pwl_ln)
+    int x2t = time + ext_ms
+    pwl_ln.set_x2(x2t)
+    pwl_ln.set_color(show_wkhl ? col_wkl : na)
+    pwl_ln.set_style(line.style_dashed)
+    pwl_ln.set_width(show_wkhl ? lw : 0)
+    pwl_lbl.set_x(x2t)
+    pwl_lbl.set_style(label.style_label_left)
+    pwl_lbl.set_textcolor(show_wkhl ? col_wkl : na)
+    pwl_lbl.set_color(show_wkhl ? color.new(col_wkl, 78) : na)
+    pwl_lbl.set_size(lbsz(lb_sz))
