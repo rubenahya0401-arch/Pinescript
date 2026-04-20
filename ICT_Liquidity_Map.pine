@@ -87,7 +87,7 @@ f_new_group() =>
 // Label sits exactly at x2 (line tip). With label.style_label_left
 // the label box extends to the RIGHT of x2, so the line ends where
 // the label begins — no line visible through the label.
-method add(LevelGroup self, float price, string txt, color col, string lstyle_str) =>
+method add(LevelGroup self, float price, int px1, string txt, color col, string lstyle_str) =>
     tol = price * reh_tol / 100.0
     dup = false
     for lvl in self.items
@@ -99,7 +99,7 @@ method add(LevelGroup self, float price, string txt, color col, string lstyle_st
             oldest = self.items.shift()
             oldest.ln.delete()
             oldest.lbl.delete()
-        int x1  = time
+        int x1  = not na(px1) ? px1 : time   // anchor to actual pivot bar
         int x2  = x2r()
         ln  = line.new(x1, price, x2, price,
                        xloc=xloc.bar_time, color=col,
@@ -144,14 +144,26 @@ method update(LevelGroup self, bool is_high, bool show, color col, string lstyle
 // MTF REQUESTS  (non-repainting: lookahead_off)
 // ════════════════════════════════════════════════════════════════
 
-[m1_sh,  m1_sl]  = request.security(syminfo.tickerid, "1",
-     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)], lookahead=barmerge.lookahead_off)
-[m15_sh, m15_sl] = request.security(syminfo.tickerid, "15",
-     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)], lookahead=barmerge.lookahead_off)
-[h1_sh,  h1_sl]  = request.security(syminfo.tickerid, "60",
-     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)], lookahead=barmerge.lookahead_off)
-[h4_sh,  h4_sl]  = request.security(syminfo.tickerid, "240",
-     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)], lookahead=barmerge.lookahead_off)
+[m1_sh,  m1_sl,  m1_sh_t,  m1_sl_t]  = request.security(syminfo.tickerid, "1",
+    [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1),
+     not na(ta.pivothigh(high,1,1)) ? time[1] : na,
+     not na(ta.pivotlow(low,1,1))  ? time[1] : na],
+    lookahead=barmerge.lookahead_off)
+[m15_sh, m15_sl, m15_sh_t, m15_sl_t] = request.security(syminfo.tickerid, "15",
+    [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1),
+     not na(ta.pivothigh(high,1,1)) ? time[1] : na,
+     not na(ta.pivotlow(low,1,1))  ? time[1] : na],
+    lookahead=barmerge.lookahead_off)
+[h1_sh,  h1_sl,  h1_sh_t,  h1_sl_t]  = request.security(syminfo.tickerid, "60",
+    [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1),
+     not na(ta.pivothigh(high,1,1)) ? time[1] : na,
+     not na(ta.pivotlow(low,1,1))  ? time[1] : na],
+    lookahead=barmerge.lookahead_off)
+[h4_sh,  h4_sl,  h4_sh_t,  h4_sl_t]  = request.security(syminfo.tickerid, "240",
+    [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1),
+     not na(ta.pivothigh(high,1,1)) ? time[1] : na,
+     not na(ta.pivotlow(low,1,1))  ? time[1] : na],
+    lookahead=barmerge.lookahead_off)
 [d_hi_p, d_lo_p] = request.security(syminfo.tickerid, "D",
      [high[1], low[1]], lookahead=barmerge.lookahead_on)
 [w_hi_p, w_lo_p] = request.security(syminfo.tickerid, "W",
@@ -201,28 +213,28 @@ f_mssl_lbl(float price, string tf) =>
 
 if barstate.isconfirmed
     if show_bsl and not na(h1_sh)
-        bsl.add(h1_sh, f_bsl_lbl(h1_sh, "H1"), col_bsl, ls_major)
+        bsl.add(h1_sh, h1_sh_t, f_bsl_lbl(h1_sh, "H1"), col_bsl, ls_major)
         last_bsl_p := h1_sh
     if show_bsl and not na(h4_sh)
-        bsl.add(h4_sh, f_bsl_lbl(h4_sh, "H4"), col_bsl, ls_major)
+        bsl.add(h4_sh, h4_sh_t, f_bsl_lbl(h4_sh, "H4"), col_bsl, ls_major)
         last_bsl_p := h4_sh
     if show_ssl and not na(h1_sl)
-        ssl.add(h1_sl, f_ssl_lbl(h1_sl, "H1"), col_ssl, ls_major)
+        ssl.add(h1_sl, h1_sl_t, f_ssl_lbl(h1_sl, "H1"), col_ssl, ls_major)
         last_ssl_p := h1_sl
     if show_ssl and not na(h4_sl)
-        ssl.add(h4_sl, f_ssl_lbl(h4_sl, "H4"), col_ssl, ls_major)
+        ssl.add(h4_sl, h4_sl_t, f_ssl_lbl(h4_sl, "H4"), col_ssl, ls_major)
         last_ssl_p := h4_sl
     if show_mbsl and not na(m1_sh)
-        mbsl.add(m1_sh, f_mbsl_lbl(m1_sh, "M1"), col_mbsl, ls_minor)
+        mbsl.add(m1_sh, m1_sh_t, f_mbsl_lbl(m1_sh, "M1"), col_mbsl, ls_minor)
         last_mbsl_p := m1_sh
     if show_mbsl and not na(m15_sh)
-        mbsl.add(m15_sh, f_mbsl_lbl(m15_sh, "M15"), col_mbsl, ls_minor)
+        mbsl.add(m15_sh, m15_sh_t, f_mbsl_lbl(m15_sh, "M15"), col_mbsl, ls_minor)
         last_mbsl_p := m15_sh
     if show_mssl and not na(m1_sl)
-        mssl.add(m1_sl, f_mssl_lbl(m1_sl, "M1"), col_mssl, ls_minor)
+        mssl.add(m1_sl, m1_sl_t, f_mssl_lbl(m1_sl, "M1"), col_mssl, ls_minor)
         last_mssl_p := m1_sl
     if show_mssl and not na(m15_sl)
-        mssl.add(m15_sl, f_mssl_lbl(m15_sl, "M15"), col_mssl, ls_minor)
+        mssl.add(m15_sl, m15_sl_t, f_mssl_lbl(m15_sl, "M15"), col_mssl, ls_minor)
         last_mssl_p := m15_sl
 
 // ════════════════════════════════════════════════════════════════
@@ -238,6 +250,12 @@ mssl.update(false, show_mssl, col_mssl, ls_minor)
 // PDH / PDL
 // ════════════════════════════════════════════════════════════════
 
+// Track the bar where each day's high/low was actually formed (reference indicator pattern)
+var float cur_day_hi   = na
+var int   cur_day_hi_t = na
+var float cur_day_lo   = na
+var int   cur_day_lo_t = na
+
 var line  pdh_ln  = na
 var line  pdl_ln  = na
 var label pdh_lbl = na
@@ -247,13 +265,27 @@ var int   pdl_x1  = na
 
 bool new_day = ta.change(time("D")) != 0
 
+// Update daily high/low tracking
+if new_day
+    pdh_x1       := na(cur_day_hi_t) ? time : cur_day_hi_t
+    pdl_x1       := na(cur_day_lo_t) ? time : cur_day_lo_t
+    cur_day_hi   := high
+    cur_day_hi_t := time
+    cur_day_lo   := low
+    cur_day_lo_t := time
+else
+    if na(cur_day_hi) or high >= cur_day_hi
+        cur_day_hi   := high
+        cur_day_hi_t := time
+    if na(cur_day_lo) or low <= cur_day_lo
+        cur_day_lo   := low
+        cur_day_lo_t := time
+
 if (new_day or na(pdh_ln)) and not na(d_hi_p)
     pdh_ln.delete()
     pdl_ln.delete()
     pdh_lbl.delete()
     pdl_lbl.delete()
-    pdh_x1  := time
-    pdl_x1  := time
     int x2   = x2r()
     pdh_ln  := line.new(time, d_hi_p, x2, d_hi_p, xloc=xloc.bar_time, color=na, width=1)
     pdl_ln  := line.new(time, d_lo_p, x2, d_lo_p, xloc=xloc.bar_time, color=na, width=1)
@@ -296,6 +328,12 @@ if not na(pdl_ln)
 // PWH / PWL
 // ════════════════════════════════════════════════════════════════
 
+// Track the bar where each week's high/low was actually formed
+var float cur_wk_hi   = na
+var int   cur_wk_hi_t = na
+var float cur_wk_lo   = na
+var int   cur_wk_lo_t = na
+
 var line  pwh_ln  = na
 var line  pwl_ln  = na
 var label pwh_lbl = na
@@ -305,13 +343,27 @@ var int   pwl_x1  = na
 
 bool new_week = ta.change(time("W")) != 0
 
+// Update weekly high/low tracking
+if new_week
+    pwh_x1       := na(cur_wk_hi_t) ? time : cur_wk_hi_t
+    pwl_x1       := na(cur_wk_lo_t) ? time : cur_wk_lo_t
+    cur_wk_hi    := high
+    cur_wk_hi_t  := time
+    cur_wk_lo    := low
+    cur_wk_lo_t  := time
+else
+    if na(cur_wk_hi) or high >= cur_wk_hi
+        cur_wk_hi   := high
+        cur_wk_hi_t := time
+    if na(cur_wk_lo) or low <= cur_wk_lo
+        cur_wk_lo   := low
+        cur_wk_lo_t := time
+
 if (new_week or na(pwh_ln)) and not na(w_hi_p)
     pwh_ln.delete()
     pwl_ln.delete()
     pwh_lbl.delete()
     pwl_lbl.delete()
-    pwh_x1  := time
-    pwl_x1  := time
     int x2   = x2r()
     pwh_ln  := line.new(time, w_hi_p, x2, w_hi_p, xloc=xloc.bar_time, color=na, width=1)
     pwl_ln  := line.new(time, w_lo_p, x2, w_lo_p, xloc=xloc.bar_time, color=na, width=1)
