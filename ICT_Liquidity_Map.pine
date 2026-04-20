@@ -70,6 +70,7 @@ lbsz(string s) =>
 
 type Level
     float price = 0.0
+    int   x1    = 0    // anchor timestamp — re-applied via set_x1() every bar
     line  ln    = na
     label lbl   = na
 
@@ -98,8 +99,9 @@ method add(LevelGroup self, float price, string txt, color col, string lstyle_st
             oldest = self.items.shift()
             oldest.ln.delete()
             oldest.lbl.delete()
-        int x2 = x2r()
-        ln  = line.new(time, price, x2, price,
+        int x1  = time
+        int x2  = x2r()
+        ln  = line.new(x1, price, x2, price,
                        xloc=xloc.bar_time, color=col,
                        style=ls(lstyle_str), width=lw)
         lbl = label.new(x2, price, txt,
@@ -108,7 +110,7 @@ method add(LevelGroup self, float price, string txt, color col, string lstyle_st
                         color=color.new(col, 10),
                         textcolor=color.white,
                         size=lbsz(lb_sz))
-        self.items.push(Level.new(price, ln, lbl))
+        self.items.push(Level.new(price, x1, ln, lbl))
 
 // ── update ───────────────────────────────────────────────────────
 // Called every bar. Grows x2 with the chart (like CheckClaimed in
@@ -125,7 +127,10 @@ method update(LevelGroup self, bool is_high, bool show, color col, string lstyle
             i   // int return — fixes CE10235
         else
             int x2 = x2r()
+            lvl.ln.set_x1(lvl.x1)        // re-anchor x1 every bar (reference indicator pattern)
             lvl.ln.set_x2(x2)
+            lvl.ln.set_y1(lvl.price)
+            lvl.ln.set_y2(lvl.price)
             lvl.ln.set_color(col)
             lvl.ln.set_style(ls(lstyle_str))
             lvl.ln.set_width(lw)
@@ -237,6 +242,8 @@ var line  pdh_ln  = na
 var line  pdl_ln  = na
 var label pdh_lbl = na
 var label pdl_lbl = na
+var int   pdh_x1  = na
+var int   pdl_x1  = na
 
 bool new_day = ta.change(time("D")) != 0
 
@@ -245,7 +252,9 @@ if (new_day or na(pdh_ln)) and not na(d_hi_p)
     pdl_ln.delete()
     pdh_lbl.delete()
     pdl_lbl.delete()
-    int x2 = x2r()
+    pdh_x1  := time
+    pdl_x1  := time
+    int x2   = x2r()
     pdh_ln  := line.new(time, d_hi_p, x2, d_hi_p, xloc=xloc.bar_time, color=na, width=1)
     pdl_ln  := line.new(time, d_lo_p, x2, d_lo_p, xloc=xloc.bar_time, color=na, width=1)
     pdh_lbl := label.new(x2, d_hi_p, "PDH: " + str.tostring(d_hi_p, format.mintick),
@@ -257,7 +266,10 @@ if (new_day or na(pdh_ln)) and not na(d_hi_p)
 
 if not na(pdh_ln)
     int x2 = x2r()
+    pdh_ln.set_x1(pdh_x1)
     pdh_ln.set_x2(x2)
+    pdh_ln.set_y1(d_hi_p)
+    pdh_ln.set_y2(d_hi_p)
     pdh_ln.set_color(show_pdhl ? col_pdh : na)
     pdh_ln.set_style(ls(ls_daily))
     pdh_ln.set_width(show_pdhl ? lw : 0)
@@ -268,7 +280,10 @@ if not na(pdh_ln)
 
 if not na(pdl_ln)
     int x2 = x2r()
+    pdl_ln.set_x1(pdl_x1)
     pdl_ln.set_x2(x2)
+    pdl_ln.set_y1(d_lo_p)
+    pdl_ln.set_y2(d_lo_p)
     pdl_ln.set_color(show_pdhl ? col_pdl : na)
     pdl_ln.set_style(ls(ls_daily))
     pdl_ln.set_width(show_pdhl ? lw : 0)
@@ -285,6 +300,8 @@ var line  pwh_ln  = na
 var line  pwl_ln  = na
 var label pwh_lbl = na
 var label pwl_lbl = na
+var int   pwh_x1  = na
+var int   pwl_x1  = na
 
 bool new_week = ta.change(time("W")) != 0
 
@@ -293,7 +310,9 @@ if (new_week or na(pwh_ln)) and not na(w_hi_p)
     pwl_ln.delete()
     pwh_lbl.delete()
     pwl_lbl.delete()
-    int x2 = x2r()
+    pwh_x1  := time
+    pwl_x1  := time
+    int x2   = x2r()
     pwh_ln  := line.new(time, w_hi_p, x2, w_hi_p, xloc=xloc.bar_time, color=na, width=1)
     pwl_ln  := line.new(time, w_lo_p, x2, w_lo_p, xloc=xloc.bar_time, color=na, width=1)
     pwh_lbl := label.new(x2, w_hi_p, "PWH: " + str.tostring(w_hi_p, format.mintick),
@@ -305,7 +324,10 @@ if (new_week or na(pwh_ln)) and not na(w_hi_p)
 
 if not na(pwh_ln)
     int x2 = x2r()
+    pwh_ln.set_x1(pwh_x1)
     pwh_ln.set_x2(x2)
+    pwh_ln.set_y1(w_hi_p)
+    pwh_ln.set_y2(w_hi_p)
     pwh_ln.set_color(show_wkhl ? col_wkh : na)
     pwh_ln.set_style(ls(ls_daily))
     pwh_ln.set_width(show_wkhl ? lw : 0)
@@ -316,7 +338,10 @@ if not na(pwh_ln)
 
 if not na(pwl_ln)
     int x2 = x2r()
+    pwl_ln.set_x1(pwl_x1)
     pwl_ln.set_x2(x2)
+    pwl_ln.set_y1(w_lo_p)
+    pwl_ln.set_y2(w_lo_p)
     pwl_ln.set_color(show_wkhl ? col_wkl : na)
     pwl_ln.set_style(ls(ls_daily))
     pwl_ln.set_width(show_wkhl ? lw : 0)
