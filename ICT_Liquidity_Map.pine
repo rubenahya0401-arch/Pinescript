@@ -29,7 +29,7 @@ ls_daily    = input.string("Solid", "PDH / PDL / PWH / PWL Style",
      options=["Solid","Dashed","Dotted"], group="Lines & Labels")
 lb_sz       = input.string("Small", "Label Size",
      options=["Tiny","Small","Normal","Large"], group="Lines & Labels")
-extend_bars = input.int(10, "Extension (bars right)",
+extend_bars = input.int(50, "Extension (bars right)",
      minval=1, maxval=500, group="Lines & Labels")
 
 col_bsl  = input.color(#00BCD4, "BSL",  group="Colors", inline="r1")
@@ -171,20 +171,24 @@ var float last_mbsl_p = na
 var float last_mssl_p = na
 
 f_bsl_lbl(float price, string tf) =>
-    reh = not na(last_bsl_p) and math.abs(price - last_bsl_p) <= price * reh_tol / 100.0
-    show_tf ? (reh ? "REH BSL " + tf : "BSL " + tf) : (reh ? "REH BSL" : "BSL")
+    reh  = not na(last_bsl_p) and math.abs(price - last_bsl_p) <= price * reh_tol / 100.0
+    base = show_tf ? (reh ? "REH BSL " + tf : "BSL " + tf) : (reh ? "REH BSL" : "BSL")
+    base + ": " + str.tostring(price, format.mintick)
 
 f_ssl_lbl(float price, string tf) =>
-    rel = not na(last_ssl_p) and math.abs(price - last_ssl_p) <= price * reh_tol / 100.0
-    show_tf ? (rel ? "REL SSL " + tf : "SSL " + tf) : (rel ? "REL SSL" : "SSL")
+    rel  = not na(last_ssl_p) and math.abs(price - last_ssl_p) <= price * reh_tol / 100.0
+    base = show_tf ? (rel ? "REL SSL " + tf : "SSL " + tf) : (rel ? "REL SSL" : "SSL")
+    base + ": " + str.tostring(price, format.mintick)
 
 f_mbsl_lbl(float price, string tf) =>
-    reh = not na(last_mbsl_p) and math.abs(price - last_mbsl_p) <= price * reh_tol / 100.0
-    show_tf ? (reh ? "REH MBSL " + tf : "MBSL " + tf) : (reh ? "REH MBSL" : "MBSL")
+    reh  = not na(last_mbsl_p) and math.abs(price - last_mbsl_p) <= price * reh_tol / 100.0
+    base = show_tf ? (reh ? "REH MBSL " + tf : "MBSL " + tf) : (reh ? "REH MBSL" : "MBSL")
+    base + ": " + str.tostring(price, format.mintick)
 
 f_mssl_lbl(float price, string tf) =>
-    rel = not na(last_mssl_p) and math.abs(price - last_mssl_p) <= price * reh_tol / 100.0
-    show_tf ? (rel ? "REL MSSL " + tf : "MSSL " + tf) : (rel ? "REL MSSL" : "MSSL")
+    rel  = not na(last_mssl_p) and math.abs(price - last_mssl_p) <= price * reh_tol / 100.0
+    base = show_tf ? (rel ? "REL MSSL " + tf : "MSSL " + tf) : (rel ? "REL MSSL" : "MSSL")
+    base + ": " + str.tostring(price, format.mintick)
 
 // ════════════════════════════════════════════════════════════════
 // DETECTION  (barstate.isconfirmed → zero repainting)
@@ -244,10 +248,12 @@ if (new_day or na(pdh_ln)) and not na(d_hi_p)
     int x2 = x2r()
     pdh_ln  := line.new(time, d_hi_p, x2, d_hi_p, xloc=xloc.bar_time, color=na, width=1)
     pdl_ln  := line.new(time, d_lo_p, x2, d_lo_p, xloc=xloc.bar_time, color=na, width=1)
-    pdh_lbl := label.new(x2, d_hi_p, "PDH", xloc=xloc.bar_time,
-                         style=label.style_label_left, color=na, textcolor=na, size=size.small)
-    pdl_lbl := label.new(x2, d_lo_p, "PDL", xloc=xloc.bar_time,
-                         style=label.style_label_left, color=na, textcolor=na, size=size.small)
+    pdh_lbl := label.new(x2, d_hi_p, "PDH: " + str.tostring(d_hi_p, format.mintick),
+                         xloc=xloc.bar_time, style=label.style_label_left,
+                         color=na, textcolor=na, size=size.small)
+    pdl_lbl := label.new(x2, d_lo_p, "PDL: " + str.tostring(d_lo_p, format.mintick),
+                         xloc=xloc.bar_time, style=label.style_label_left,
+                         color=na, textcolor=na, size=size.small)
 
 if not na(pdh_ln)
     int x2 = x2r()
@@ -290,10 +296,12 @@ if (new_week or na(pwh_ln)) and not na(w_hi_p)
     int x2 = x2r()
     pwh_ln  := line.new(time, w_hi_p, x2, w_hi_p, xloc=xloc.bar_time, color=na, width=1)
     pwl_ln  := line.new(time, w_lo_p, x2, w_lo_p, xloc=xloc.bar_time, color=na, width=1)
-    pwh_lbl := label.new(x2, w_hi_p, "PWH", xloc=xloc.bar_time,
-                         style=label.style_label_left, color=na, textcolor=na, size=size.small)
-    pwl_lbl := label.new(x2, w_lo_p, "PWL", xloc=xloc.bar_time,
-                         style=label.style_label_left, color=na, textcolor=na, size=size.small)
+    pwh_lbl := label.new(x2, w_hi_p, "PWH: " + str.tostring(w_hi_p, format.mintick),
+                         xloc=xloc.bar_time, style=label.style_label_left,
+                         color=na, textcolor=na, size=size.small)
+    pwl_lbl := label.new(x2, w_lo_p, "PWL: " + str.tostring(w_lo_p, format.mintick),
+                         xloc=xloc.bar_time, style=label.style_label_left,
+                         color=na, textcolor=na, size=size.small)
 
 if not na(pwh_ln)
     int x2 = x2r()
