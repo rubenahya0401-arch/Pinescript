@@ -8,7 +8,6 @@ indicator("ICT Liquidity Map", overlay=true, max_lines_count=500, max_labels_cou
 // INPUTS
 // ════════════════════════════════════════════════════════════════
 
-// ── Visibility ──────────────────────────────────────────────────
 show_bsl  = input.bool(true,  "BSL  — Buy Side Liquidity",       group="Visibility")
 show_ssl  = input.bool(true,  "SSL  — Sell Side Liquidity",      group="Visibility")
 show_mbsl = input.bool(true,  "MBSL — Minor Buy Side (M1/M15)",  group="Visibility")
@@ -17,28 +16,20 @@ show_pdhl = input.bool(true,  "PDH / PDL — Prev Day Hi/Lo",      group="Visibi
 show_wkhl = input.bool(false, "PWH / PWL — Prev Week Hi/Lo",     group="Visibility")
 show_tf   = input.bool(true,  "Show TF Tag in Labels",           group="Visibility")
 
-// ── Swing Settings ──────────────────────────────────────────────
 reh_tol = input.float(0.05, "REH / REL Tolerance (%)",
      minval=0.0, maxval=2.0, step=0.01, group="Swing Settings",
-     tooltip="Two swing levels within this % of each other are labelled REH or REL")
+     tooltip="Swing highs/lows within this % of each other are marked REH or REL")
 max_lvl = input.int(8, "Max Levels Per Type", minval=2, maxval=25, group="Swing Settings",
-     tooltip="Oldest level removed when limit is reached")
+     tooltip="Oldest level is removed when the limit is reached")
 
-// ── Lines & Labels ──────────────────────────────────────────────
-lw          = input.int(1,    "Line Width",    minval=1, maxval=4,     group="Lines & Labels")
-ls_major    = input.string("Dashed", "BSL / SSL Style",
-     options=["Solid","Dashed","Dotted"], group="Lines & Labels")
-ls_minor    = input.string("Dotted", "MBSL / MSSL Style",
-     options=["Solid","Dashed","Dotted"], group="Lines & Labels")
-ls_daily    = input.string("Solid",  "PDH / PDL / PWH / PWL Style",
-     options=["Solid","Dashed","Dotted"], group="Lines & Labels")
-lb_sz       = input.string("Small",  "Label Size",
-     options=["Tiny","Small","Normal","Large"], group="Lines & Labels")
-extend_bars = input.int(8, "Extension (bars right)",
-     minval=0, maxval=500, group="Lines & Labels",
-     tooltip="Lines and labels extend this many bars to the right of the current bar")
+lw          = input.int(1,       "Line Width",            minval=1, maxval=4,          group="Lines & Labels")
+ls_major    = input.string("Dashed", "BSL / SSL Style",   options=["Solid","Dashed","Dotted"], group="Lines & Labels")
+ls_minor    = input.string("Dotted", "MBSL / MSSL Style", options=["Solid","Dashed","Dotted"], group="Lines & Labels")
+ls_daily    = input.string("Solid",  "PDH / PDL / PWH / PWL Style", options=["Solid","Dashed","Dotted"], group="Lines & Labels")
+lb_sz       = input.string("Small",  "Label Size",        options=["Tiny","Small","Normal","Large"], group="Lines & Labels")
+extend_bars = input.int(8, "Label offset (bars right)", minval=0, maxval=500, group="Lines & Labels",
+     tooltip="How many bars to the right the label sits from the current bar")
 
-// ── Colors ──────────────────────────────────────────────────────
 col_bsl  = input.color(#00BCD4, "BSL",  group="Colors", inline="r1")
 col_ssl  = input.color(#FF5252, "SSL",  group="Colors", inline="r1")
 col_mbsl = input.color(#4DD0E1, "MBSL", group="Colors", inline="r2")
@@ -52,11 +43,6 @@ col_wkl  = input.color(#AB47BC, "PWL",  group="Colors", inline="r4")
 // HELPERS
 // ════════════════════════════════════════════════════════════════
 
-// Time-based extension — lines stay anchored to timestamps,
-// so they scroll correctly with the chart (xloc.bar_time pattern).
-int bar_ms = int(timeframe.in_seconds() * 1000)
-int ext_ms = extend_bars * bar_ms
-
 ls(string s) =>
     s == "Dashed" ? line.style_dashed : s == "Dotted" ? line.style_dotted : line.style_solid
 
@@ -64,77 +50,77 @@ lbsz(string s) =>
     s == "Tiny" ? size.tiny : s == "Normal" ? size.normal : s == "Large" ? size.large : size.small
 
 // ════════════════════════════════════════════════════════════════
-// USER-DEFINED TYPE — LevelGroup
+// USER-DEFINED TYPES
 // ════════════════════════════════════════════════════════════════
 
+// One liquidity level: its price, the horizontal line, and the label.
+type Level
+    float price = 0.0
+    line  ln    = na
+    label lbl   = na
+
+// A collection of levels for one category (BSL, SSL, …).
 type LevelGroup
-    array<float> prices = na
-    array<line>  lines  = na
-    array<label> labels = na
+    array<Level> items = na   // initialised via factory (CE10133 workaround)
 
-// Arrays cannot be initialised inside a type block (CE10133)
 f_new_group() =>
-    LevelGroup.new(array.new<float>(), array.new<line>(), array.new<label>())
+    LevelGroup.new(array.new<Level>())
 
-// Add level — no-op if a duplicate exists within REH/REL tolerance
+// ── add ─────────────────────────────────────────────────────────
+// Creates a new level. Skips duplicates within REH/REL tolerance.
+// Lines use xloc.bar_index (default) so they are anchored to candles
+// and scroll correctly with the chart.
+// Labels sit at bar_index + extend_bars every bar → always at right edge.
 method add(LevelGroup self, float price, string txt, color col, string lstyle_str) =>
     tol = price * reh_tol / 100.0
     dup = false
-    sz  = self.prices.size()
-    if sz > 0
-        for i = 0 to sz - 1
-            if math.abs(self.prices.get(i) - price) <= tol
-                dup := true
-                break
+    for lvl in self.items
+        if math.abs(lvl.price - price) <= tol
+            dup := true
+            break
     if not dup
-        if self.prices.size() >= max_lvl
-            self.lines.shift().delete()
-            self.labels.shift().delete()
-            self.prices.shift()
-        int x2t = time + ext_ms
-        ln  = line.new(time, price, time + bar_ms, price,
-             xloc=xloc.bar_time, color=col, style=ls(lstyle_str), width=lw,
-             extend=extend.right)
-        lbl = label.new(x2t, price, txt,
-             xloc=xloc.bar_time, color=color.new(col, 78), textcolor=col,
-             style=label.style_label_left, size=lbsz(lb_sz))
-        self.prices.push(price)
-        self.lines.push(ln)
-        self.labels.push(lbl)
+        if self.items.size() >= max_lvl
+            oldest = self.items.shift()
+            oldest.ln.delete()
+            oldest.lbl.delete()
+        // xloc.bar_index is the default — lines are anchored to bar positions.
+        // extend.right makes the line stretch to the right edge of the chart.
+        ln  = line.new(bar_index, price, bar_index + 1, price,
+                       extend=extend.right, color=col, style=ls(lstyle_str), width=lw)
+        // Label: opaque background so the line does not bleed through it.
+        lbl = label.new(bar_index + extend_bars, price, txt,
+                        style=label.style_label_left,
+                        color=color.new(col, 15), textcolor=color.white,
+                        size=lbsz(lb_sz))
+        self.items.push(Level.new(price, ln, lbl))
 
-// Update every bar: extend x2, refresh style/colour, remove swept levels.
-// Re-applying style/colour every bar makes toggles and colour changes instant.
-// is_high=true  → BSL/MBSL: swept when high >= level
-// is_high=false → SSL/MSSL: swept when low  <= level
+// ── update ───────────────────────────────────────────────────────
+// Called every bar. Removes swept levels and refreshes style / label x.
 method update(LevelGroup self, bool is_high, bool show, color col, string lstyle_str) =>
     i = 0
-    while i < self.prices.size()
-        price = self.prices.get(i)
-        swept = is_high ? high >= price : low <= price
+    while i < self.items.size()
+        lvl   = self.items.get(i)
+        swept = is_high ? high >= lvl.price : low <= lvl.price
         if not show or swept
-            self.lines.get(i).delete()
-            self.labels.get(i).delete()
-            self.prices.remove(i)
-            self.lines.remove(i)
-            self.labels.remove(i)
-            i  // keep int return type — fixes CE10235
+            lvl.ln.delete()
+            lvl.lbl.delete()
+            self.items.remove(i)
+            i   // keep int return type — fixes CE10235
         else
-            int x2t  = time + ext_ms
-            ln_i     = self.lines.get(i)
-            lbl_i    = self.labels.get(i)
-            // extend_right handles the rightward extension — no set_x2 needed
-            ln_i.set_color(col)
-            ln_i.set_style(ls(lstyle_str))
-            ln_i.set_width(lw)
-            lbl_i.set_x(x2t)
-            lbl_i.set_textcolor(col)
-            lbl_i.set_color(color.new(col, 78))
-            lbl_i.set_size(lbsz(lb_sz))
+            // Move label to sit extend_bars to the right of the current bar.
+            // This keeps the label pinned to the right edge as new bars arrive.
+            lvl.lbl.set_x(bar_index + extend_bars)
+            lvl.lbl.set_color(color.new(col, 15))
+            lvl.lbl.set_textcolor(color.white)
+            lvl.lbl.set_size(lbsz(lb_sz))
+            lvl.ln.set_color(col)
+            lvl.ln.set_style(ls(lstyle_str))
+            lvl.ln.set_width(lw)
             i += 1
 
 // ════════════════════════════════════════════════════════════════
 // MTF SECURITY REQUESTS  (non-repainting: lookahead_off)
-// ta.pivothigh(high,1,1) → confirmed 1 bar after the pivot
+// ta.pivothigh(high,1,1) confirms one bar after the pivot bar.
 // ════════════════════════════════════════════════════════════════
 
 [m1_sh,  m1_sl]  = request.security(syminfo.tickerid, "1",
@@ -149,7 +135,7 @@ method update(LevelGroup self, bool is_high, bool show, color col, string lstyle
 [h4_sh,  h4_sl]  = request.security(syminfo.tickerid, "240",
      [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1)], lookahead=barmerge.lookahead_off)
 
-// lookahead_on is safe here: we explicitly request high[1]/low[1] (confirmed prior bar)
+// lookahead_on is safe: we explicitly request the prior confirmed bar (high[1]/low[1]).
 [d_hi_p, d_lo_p] = request.security(syminfo.tickerid, "D",
      [high[1], low[1]], lookahead=barmerge.lookahead_on)
 
@@ -238,8 +224,7 @@ mssl.update(false, show_mssl, col_mssl, ls_minor)
 
 // ════════════════════════════════════════════════════════════════
 // PDH / PDL  — Previous Day High / Low
-// Lines recreated each new day; all properties refreshed every bar
-// so toggle / colour / style changes apply instantly.
+// Recreated at the start of each day; label pinned to right edge every bar.
 // ════════════════════════════════════════════════════════════════
 
 var line  pdh_ln  = na
@@ -247,42 +232,40 @@ var line  pdl_ln  = na
 var label pdh_lbl = na
 var label pdl_lbl = na
 
-bool new_day_d = ta.change(time("D")) != 0
+bool new_day = ta.change(time("D")) != 0
 
-if (new_day_d or na(pdh_ln)) and not na(d_hi_p)
+if (new_day or na(pdh_ln)) and not na(d_hi_p)
     pdh_ln.delete()
     pdl_ln.delete()
     pdh_lbl.delete()
     pdl_lbl.delete()
-    pdh_ln  := line.new(time, d_hi_p, time + bar_ms, d_hi_p,
-         xloc=xloc.bar_time, color=na, width=1, extend=extend.right)
-    pdl_ln  := line.new(time, d_lo_p, time + bar_ms, d_lo_p,
-         xloc=xloc.bar_time, color=na, width=1, extend=extend.right)
-    pdh_lbl := label.new(time + ext_ms, d_hi_p, "PDH",
-         xloc=xloc.bar_time, color=na, textcolor=na, size=size.small)
-    pdl_lbl := label.new(time + ext_ms, d_lo_p, "PDL",
-         xloc=xloc.bar_time, color=na, textcolor=na, size=size.small)
+    pdh_ln  := line.new(bar_index, d_hi_p, bar_index + 1, d_hi_p,
+                        extend=extend.right, color=na, width=1)
+    pdl_ln  := line.new(bar_index, d_lo_p, bar_index + 1, d_lo_p,
+                        extend=extend.right, color=na, width=1)
+    pdh_lbl := label.new(bar_index + extend_bars, d_hi_p, "PDH",
+                         style=label.style_label_left, color=na, textcolor=na, size=size.small)
+    pdl_lbl := label.new(bar_index + extend_bars, d_lo_p, "PDL",
+                         style=label.style_label_left, color=na, textcolor=na, size=size.small)
 
 if not na(pdh_ln)
-    int x2t = time + ext_ms
     pdh_ln.set_color(show_pdhl ? col_pdh : na)
     pdh_ln.set_style(ls(ls_daily))
     pdh_ln.set_width(show_pdhl ? lw : 0)
-    pdh_lbl.set_x(x2t)
+    pdh_lbl.set_x(bar_index + extend_bars)
     pdh_lbl.set_style(label.style_label_left)
-    pdh_lbl.set_textcolor(show_pdhl ? col_pdh : na)
-    pdh_lbl.set_color(show_pdhl ? color.new(col_pdh, 78) : na)
+    pdh_lbl.set_textcolor(show_pdhl ? color.white : na)
+    pdh_lbl.set_color(show_pdhl ? color.new(col_pdh, 15) : na)
     pdh_lbl.set_size(lbsz(lb_sz))
 
 if not na(pdl_ln)
-    int x2t = time + ext_ms
     pdl_ln.set_color(show_pdhl ? col_pdl : na)
     pdl_ln.set_style(ls(ls_daily))
     pdl_ln.set_width(show_pdhl ? lw : 0)
-    pdl_lbl.set_x(x2t)
+    pdl_lbl.set_x(bar_index + extend_bars)
     pdl_lbl.set_style(label.style_label_left)
-    pdl_lbl.set_textcolor(show_pdhl ? col_pdl : na)
-    pdl_lbl.set_color(show_pdhl ? color.new(col_pdl, 78) : na)
+    pdl_lbl.set_textcolor(show_pdhl ? color.white : na)
+    pdl_lbl.set_color(show_pdhl ? color.new(col_pdl, 15) : na)
     pdl_lbl.set_size(lbsz(lb_sz))
 
 // ════════════════════════════════════════════════════════════════
@@ -294,40 +277,38 @@ var line  pwl_ln  = na
 var label pwh_lbl = na
 var label pwl_lbl = na
 
-bool new_week_w = ta.change(time("W")) != 0
+bool new_week = ta.change(time("W")) != 0
 
-if (new_week_w or na(pwh_ln)) and not na(w_hi_p)
+if (new_week or na(pwh_ln)) and not na(w_hi_p)
     pwh_ln.delete()
     pwl_ln.delete()
     pwh_lbl.delete()
     pwl_lbl.delete()
-    pwh_ln  := line.new(time, w_hi_p, time + bar_ms, w_hi_p,
-         xloc=xloc.bar_time, color=na, width=1, extend=extend.right)
-    pwl_ln  := line.new(time, w_lo_p, time + bar_ms, w_lo_p,
-         xloc=xloc.bar_time, color=na, width=1, extend=extend.right)
-    pwh_lbl := label.new(time + ext_ms, w_hi_p, "PWH",
-         xloc=xloc.bar_time, color=na, textcolor=na, size=size.small)
-    pwl_lbl := label.new(time + ext_ms, w_lo_p, "PWL",
-         xloc=xloc.bar_time, color=na, textcolor=na, size=size.small)
+    pwh_ln  := line.new(bar_index, w_hi_p, bar_index + 1, w_hi_p,
+                        extend=extend.right, color=na, width=1)
+    pwl_ln  := line.new(bar_index, w_lo_p, bar_index + 1, w_lo_p,
+                        extend=extend.right, color=na, width=1)
+    pwh_lbl := label.new(bar_index + extend_bars, w_hi_p, "PWH",
+                         style=label.style_label_left, color=na, textcolor=na, size=size.small)
+    pwl_lbl := label.new(bar_index + extend_bars, w_lo_p, "PWL",
+                         style=label.style_label_left, color=na, textcolor=na, size=size.small)
 
 if not na(pwh_ln)
-    int x2t = time + ext_ms
     pwh_ln.set_color(show_wkhl ? col_wkh : na)
-    pwh_ln.set_style(line.style_dashed)
+    pwh_ln.set_style(ls(ls_daily))
     pwh_ln.set_width(show_wkhl ? lw : 0)
-    pwh_lbl.set_x(x2t)
+    pwh_lbl.set_x(bar_index + extend_bars)
     pwh_lbl.set_style(label.style_label_left)
-    pwh_lbl.set_textcolor(show_wkhl ? col_wkh : na)
-    pwh_lbl.set_color(show_wkhl ? color.new(col_wkh, 78) : na)
+    pwh_lbl.set_textcolor(show_wkhl ? color.white : na)
+    pwh_lbl.set_color(show_wkhl ? color.new(col_wkh, 15) : na)
     pwh_lbl.set_size(lbsz(lb_sz))
 
 if not na(pwl_ln)
-    int x2t = time + ext_ms
     pwl_ln.set_color(show_wkhl ? col_wkl : na)
-    pwl_ln.set_style(line.style_dashed)
+    pwl_ln.set_style(ls(ls_daily))
     pwl_ln.set_width(show_wkhl ? lw : 0)
-    pwl_lbl.set_x(x2t)
+    pwl_lbl.set_x(bar_index + extend_bars)
     pwl_lbl.set_style(label.style_label_left)
-    pwl_lbl.set_textcolor(show_wkhl ? col_wkl : na)
-    pwl_lbl.set_color(show_wkhl ? color.new(col_wkl, 78) : na)
+    pwl_lbl.set_textcolor(show_wkhl ? color.white : na)
+    pwl_lbl.set_color(show_wkhl ? color.new(col_wkl, 15) : na)
     pwl_lbl.set_size(lbsz(lb_sz))
