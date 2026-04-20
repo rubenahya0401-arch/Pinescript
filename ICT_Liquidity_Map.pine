@@ -94,7 +94,7 @@ method add(LevelGroup self, float price, string txt, color col, string lstyle_st
         int x2t = time + ext_ms
         ln  = line.new(time, price, time + bar_ms, price,
              xloc=xloc.bar_time, color=col, style=ls(lstyle_str), width=lw,
-             extend=line.extend_right)
+             extend=extend.right)
         lbl = label.new(x2t, price, txt,
              xloc=xloc.bar_time, color=color.new(col, 78), textcolor=col,
              style=label.style_label_left, size=lbsz(lb_sz))
@@ -255,9 +255,9 @@ if (new_day_d or na(pdh_ln)) and not na(d_hi_p)
     pdh_lbl.delete()
     pdl_lbl.delete()
     pdh_ln  := line.new(time, d_hi_p, time + bar_ms, d_hi_p,
-         xloc=xloc.bar_time, color=na, width=1, extend=line.extend_right)
+         xloc=xloc.bar_time, color=na, width=1, extend=extend.right)
     pdl_ln  := line.new(time, d_lo_p, time + bar_ms, d_lo_p,
-         xloc=xloc.bar_time, color=na, width=1, extend=line.extend_right)
+         xloc=xloc.bar_time, color=na, width=1, extend=extend.right)
     pdh_lbl := label.new(time + ext_ms, d_hi_p, "PDH",
          xloc=xloc.bar_time, color=na, textcolor=na, size=size.small)
     pdl_lbl := label.new(time + ext_ms, d_lo_p, "PDL",
@@ -302,9 +302,9 @@ if (new_week_w or na(pwh_ln)) and not na(w_hi_p)
     pwh_lbl.delete()
     pwl_lbl.delete()
     pwh_ln  := line.new(time, w_hi_p, time + bar_ms, w_hi_p,
-         xloc=xloc.bar_time, color=na, width=1, extend=line.extend_right)
+         xloc=xloc.bar_time, color=na, width=1, extend=extend.right)
     pwl_ln  := line.new(time, w_lo_p, time + bar_ms, w_lo_p,
-         xloc=xloc.bar_time, color=na, width=1, extend=line.extend_right)
+         xloc=xloc.bar_time, color=na, width=1, extend=extend.right)
     pwh_lbl := label.new(time + ext_ms, w_hi_p, "PWH",
          xloc=xloc.bar_time, color=na, textcolor=na, size=size.small)
     pwl_lbl := label.new(time + ext_ms, w_lo_p, "PWL",
