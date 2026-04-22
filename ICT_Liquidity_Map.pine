@@ -14,9 +14,10 @@ show_wkhl  = input.bool(false, "PWH / PWL",                     group="Visibilit
 show_tf    = input.bool(true,  "TF tag in labels",              group="Visibility")
 show_price = input.bool(true,  "Price in labels",               group="Visibility")
 
-reh_tol = input.float(0.05, "REH/REL Tolerance (%)",
+reh_tol  = input.float(0.05, "REH/REL Tolerance (%)",
      minval=0.0, maxval=2.0, step=0.01, group="Detection")
-max_lvl = input.int(8, "Max Levels Per Type", minval=2, maxval=30, group="Detection")
+max_lvl  = input.int(8, "Max Levels Per Type", minval=2, maxval=30, group="Detection")
+sweep_on = input.bool(true, "Apagar linha quando preço a toca", group="Detection")
 
 lw       = input.int(1,       "Line Width",                minval=1, maxval=4,                        group="Style")
 ls_major = input.string("Dashed", "BSL/SSL Style",         options=["Solid","Dashed","Dotted"],       group="Style")
@@ -186,7 +187,8 @@ if barstate.isconfirmed
 i = 0
 while i < array.size(levels)
     lvl   = array.get(levels, i)
-    swept = lvl.is_high ? high >= lvl.price : low <= lvl.price
+    // Sweep only on confirmed bars to avoid premature deletion on live wicks
+    swept = sweep_on and barstate.isconfirmed and (lvl.is_high ? high >= lvl.price : low <= lvl.price)
     if swept
         line.delete(lvl.ln)
         label.delete(lvl.lbl)
