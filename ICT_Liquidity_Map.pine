@@ -1,30 +1,28 @@
 // MIT License — Copyright (c) 2026 traderdiegox
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
-
 //@version=6
 indicator("ICT Liquidity Map", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // ════════════════════════════════════════════════════════════════
 // INPUTS
 // ════════════════════════════════════════════════════════════════
-show_bsl  = input.bool(true,  "BSL  (H1/H4 pivot highs)",  group="Visibility")
-show_ssl  = input.bool(true,  "SSL  (H1/H4 pivot lows)",   group="Visibility")
-show_mbsl = input.bool(true,  "MBSL (M1/M15 pivot highs)", group="Visibility")
-show_mssl = input.bool(true,  "MSSL (M1/M15 pivot lows)",  group="Visibility")
-show_pdhl = input.bool(true,  "PDH / PDL",                 group="Visibility")
-show_wkhl = input.bool(false, "PWH / PWL",                 group="Visibility")
-show_tf   = input.bool(true,  "TF tag in labels",          group="Visibility")
-show_price= input.bool(true,  "Price in labels",            group="Visibility")
+show_bsl   = input.bool(true,  "BSL  (H1/H4 pivot highs)",      group="Visibility")
+show_ssl   = input.bool(true,  "SSL  (H1/H4 pivot lows)",       group="Visibility")
+show_mbsl  = input.bool(true,  "MBSL (M1/M15 pivot highs)",     group="Visibility")
+show_mssl  = input.bool(true,  "MSSL (M1/M15 pivot lows)",      group="Visibility")
+show_pdhl  = input.bool(true,  "PDH / PDL",                     group="Visibility")
+show_wkhl  = input.bool(false, "PWH / PWL",                     group="Visibility")
+show_tf    = input.bool(true,  "TF tag in labels",              group="Visibility")
+show_price = input.bool(true,  "Price in labels",               group="Visibility")
 
 reh_tol = input.float(0.05, "REH/REL Tolerance (%)",
      minval=0.0, maxval=2.0, step=0.01, group="Detection")
 max_lvl = input.int(8, "Max Levels Per Type", minval=2, maxval=30, group="Detection")
 
-lw       = input.int(1,       "Line Width",           minval=1, maxval=4,                     group="Style")
-ls_major = input.string("Dashed", "BSL/SSL Style",    options=["Solid","Dashed","Dotted"],    group="Style")
-ls_minor = input.string("Dotted", "MBSL/MSSL Style",  options=["Solid","Dashed","Dotted"],    group="Style")
-ls_daily = input.string("Solid",  "PDH/PDL/PWH/PWL Style", options=["Solid","Dashed","Dotted"], group="Style")
-lb_sz    = input.string("Small",  "Label Size",       options=["Tiny","Small","Normal","Large"], group="Style")
+lw       = input.int(1,       "Line Width",                minval=1, maxval=4,                        group="Style")
+ls_major = input.string("Dashed", "BSL/SSL Style",         options=["Solid","Dashed","Dotted"],       group="Style")
+ls_minor = input.string("Dotted", "MBSL/MSSL Style",       options=["Solid","Dashed","Dotted"],       group="Style")
+ls_daily = input.string("Solid",  "PDH/PDL/PWH/PWL Style", options=["Solid","Dashed","Dotted"],       group="Style")
+lb_sz    = input.string("Small",  "Label Size",            options=["Tiny","Small","Normal","Large"], group="Style")
 
 col_bsl  = input.color(#00BCD4, "BSL",  group="Colors", inline="c1")
 col_ssl  = input.color(#FF5252, "SSL",  group="Colors", inline="c1")
@@ -36,123 +34,140 @@ col_wkh  = input.color(#E040FB, "PWH",  group="Colors", inline="c4")
 col_wkl  = input.color(#AB47BC, "PWL",  group="Colors", inline="c4")
 
 // ════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ════════════════════════════════════════════════════════════════
+// Duration of one bar in ms — used only for x2 offset (line has extend.right so x2 is irrelevant visually)
+var int   BAR_MS     = math.max(1000, int(timeframe.in_seconds() * 1000))
+// Fully transparent color — used to visually hide lines/labels without deleting them
+var color INVIS      = color.new(color.black, 100)
+
+// ════════════════════════════════════════════════════════════════
 // HELPERS
 // ════════════════════════════════════════════════════════════════
-int bar_ms = int(timeframe.in_seconds() * 1000)
-
 f_ls(string s) =>
-    s == "Dashed" ? line.style_dashed : s == "Dotted" ? line.style_dotted : line.style_solid
+    switch s
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        =>          line.style_solid
 
 f_lbsz(string s) =>
-    s == "Tiny" ? size.tiny : s == "Normal" ? size.normal : s == "Large" ? size.large : size.small
+    switch s
+        "Tiny"   => size.tiny
+        "Normal" => size.normal
+        "Large"  => size.large
+        =>          size.small
 
 // ════════════════════════════════════════════════════════════════
-// UDT  — stores everything about one liquidity level
+// UDT — one liquidity level
 // ════════════════════════════════════════════════════════════════
 type LiqLevel
     float  price
-    int    x1        // detection bar timestamp — NEVER changed after creation
-    bool   is_high   // true = BSL/MBSL/PDH/PWH, false = SSL/MSSL/PDL/PWL
-    string cat       // "BSL" | "SSL" | "MBSL" | "MSSL"
+    int    x1       // pivot bar timestamp — set once, NEVER changed
+    bool   is_high
+    string cat      // "BSL" | "SSL" | "MBSL" | "MSSL"
     color  col
     string lstyle
-    line   ln        // line uses extend=extend.right — x1 is the only anchor
-    label  lbl       // label x moves to right edge every bar
+    line   ln       // created with extend=extend.right → never repositioned
+    label  lbl      // x updated each bar to keep it at right edge
 
 var array<LiqLevel> levels = array.new<LiqLevel>()
 
 // ════════════════════════════════════════════════════════════════
-// LEVEL MANAGEMENT HELPERS
+// LEVEL MANAGEMENT
 // ════════════════════════════════════════════════════════════════
-f_lbl_text(float price, string cat, string tf) =>
-    base = show_tf and tf != "" ? cat + " " + tf : cat
-    show_price ? base + ": " + str.tostring(price, format.mintick) : base
 
-// Remove oldest level of this category to enforce max_lvl cap
+// Remove oldest level of `cat` when at cap
 f_evict(string cat) =>
     int  cnt      = 0
     int  oldest_i = -1
-    int  oldest_t = int(na)
+    int  oldest_t = 0
+    bool found    = false
     for i = 0 to array.size(levels) - 1
         lvl = array.get(levels, i)
         if lvl.cat == cat
             cnt += 1
-            if na(oldest_t) or lvl.x1 < oldest_t
+            if not found or lvl.x1 < oldest_t
                 oldest_t := lvl.x1
                 oldest_i := i
+                found    := true
     if cnt >= max_lvl and oldest_i >= 0
         old = array.get(levels, oldest_i)
         line.delete(old.ln)
         label.delete(old.lbl)
         array.remove(levels, oldest_i)
 
-// True if a level within tolerance already exists for this category
+// True if price already exists for this category (within tolerance)
 f_is_dup(float price, string cat) =>
-    tol = price * reh_tol / 100.0
-    dup = false
+    tol    = price * reh_tol / 100.0
+    bool r = false
     for lvl in levels
         if lvl.cat == cat and math.abs(lvl.price - price) <= tol
-            dup := true
+            r := true
             break
-    dup
+    r
 
-// Create one level. KEY DESIGN:
-//   line → extend=extend.right, x1 anchored to pivot bar, NEVER updated
-//   label → position updated to 'time' every bar (keeps it at right edge)
-f_create(float price, int x1, bool is_high, string cat, color col, string lstyle, string lbl_txt) =>
-    ln  = line.new(x1=x1, y1=price, x2=x1 + bar_ms, y2=price,
+f_make_txt(float price, string cat, string tf) =>
+    base = show_tf and tf != "" ? cat + " " + tf : cat
+    show_price ? base + ": " + str.tostring(price, format.mintick) : base
+
+// Create a level. Line is fully static after creation (extend.right).
+// Only label.x is updated each bar so the label stays at right edge.
+f_create(float price, int px1, bool is_high, string cat, color col, string lstyle, string txt) =>
+    ln  = line.new(x1=px1, y1=price, x2=px1 + BAR_MS, y2=price,
                    xloc=xloc.bar_time, extend=extend.right,
                    color=col, style=f_ls(lstyle), width=lw)
-    lbl = label.new(x=time, y=price, text=lbl_txt,
+    lbl = label.new(x=time, y=price, text=txt,
                     xloc=xloc.bar_time, style=label.style_label_left,
                     color=color.new(col, 10), textcolor=color.white,
                     size=f_lbsz(lb_sz))
     f_evict(cat)
-    array.push(levels, LiqLevel.new(price, x1, is_high, cat, col, lstyle, ln, lbl))
+    array.push(levels, LiqLevel.new(price, px1, is_high, cat, col, lstyle, ln, lbl))
 
-// Conditional add — skip if price is na or already present
-f_add(float price, int x1, bool is_high, string cat, color col, string lstyle, string tf) =>
+f_add(float price, int px1, bool is_high, string cat, color col, string lstyle, string tf) =>
     if not na(price) and not f_is_dup(price, cat)
-        f_create(price, x1, is_high, cat, col, lstyle, f_lbl_text(price, cat, tf))
+        f_create(price, px1, is_high, cat, col, lstyle, f_make_txt(price, cat, tf))
 
 // ════════════════════════════════════════════════════════════════
-// MTF REQUESTS — pivot bar time (time[1]) included per request
+// MTF DATA  (lookahead_off = no repainting for pivots)
+// time[1] inside security = actual pivot bar timestamp
 // ════════════════════════════════════════════════════════════════
 [m1_sh,  m1_sl,  m1_sht,  m1_slt]  = request.security(syminfo.tickerid, "1",
     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1),
-     not na(ta.pivothigh(high,1,1)) ? time[1] : na,
-     not na(ta.pivotlow(low,1,1))  ? time[1] : na],
+     not na(ta.pivothigh(high,1,1)) ? time[1] : int(na),
+     not na(ta.pivotlow(low,1,1))  ? time[1] : int(na)],
     lookahead=barmerge.lookahead_off)
+
 [m15_sh, m15_sl, m15_sht, m15_slt] = request.security(syminfo.tickerid, "15",
     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1),
-     not na(ta.pivothigh(high,1,1)) ? time[1] : na,
-     not na(ta.pivotlow(low,1,1))  ? time[1] : na],
+     not na(ta.pivothigh(high,1,1)) ? time[1] : int(na),
+     not na(ta.pivotlow(low,1,1))  ? time[1] : int(na)],
     lookahead=barmerge.lookahead_off)
+
 [h1_sh,  h1_sl,  h1_sht,  h1_slt]  = request.security(syminfo.tickerid, "60",
     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1),
-     not na(ta.pivothigh(high,1,1)) ? time[1] : na,
-     not na(ta.pivotlow(low,1,1))  ? time[1] : na],
+     not na(ta.pivothigh(high,1,1)) ? time[1] : int(na),
+     not na(ta.pivotlow(low,1,1))  ? time[1] : int(na)],
     lookahead=barmerge.lookahead_off)
+
 [h4_sh,  h4_sl,  h4_sht,  h4_slt]  = request.security(syminfo.tickerid, "240",
     [ta.pivothigh(high,1,1), ta.pivotlow(low,1,1),
-     not na(ta.pivothigh(high,1,1)) ? time[1] : na,
-     not na(ta.pivotlow(low,1,1))  ? time[1] : na],
+     not na(ta.pivothigh(high,1,1)) ? time[1] : int(na),
+     not na(ta.pivotlow(low,1,1))  ? time[1] : int(na)],
     lookahead=barmerge.lookahead_off)
+
 [d_hi, d_lo] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead=barmerge.lookahead_on)
 [w_hi, w_lo] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead=barmerge.lookahead_on)
 
 // ════════════════════════════════════════════════════════════════
-// DETECTION  (barstate.isconfirmed → zero repainting)
+// DETECTION  (barstate.isconfirmed = zero repainting)
 // ════════════════════════════════════════════════════════════════
 if barstate.isconfirmed
-    // BSL / SSL — major (H1 & H4)
     if show_bsl
         f_add(h1_sh, not na(h1_sht) ? h1_sht : time, true,  "BSL", col_bsl, ls_major, "H1")
         f_add(h4_sh, not na(h4_sht) ? h4_sht : time, true,  "BSL", col_bsl, ls_major, "H4")
     if show_ssl
         f_add(h1_sl, not na(h1_slt) ? h1_slt : time, false, "SSL", col_ssl, ls_major, "H1")
         f_add(h4_sl, not na(h4_slt) ? h4_slt : time, false, "SSL", col_ssl, ls_major, "H4")
-    // MBSL / MSSL — minor (M1 & M15)
     if show_mbsl
         f_add(m1_sh,  not na(m1_sht)  ? m1_sht  : time, true,  "MBSL", col_mbsl, ls_minor, "M1")
         f_add(m15_sh, not na(m15_sht) ? m15_sht : time, true,  "MBSL", col_mbsl, ls_minor, "M15")
@@ -161,9 +176,12 @@ if barstate.isconfirmed
         f_add(m15_sl, not na(m15_slt) ? m15_slt : time, false, "MSSL", col_mssl, ls_minor, "M15")
 
 // ════════════════════════════════════════════════════════════════
-// UPDATE LOOP — BSL / SSL / MBSL / MSSL
-// Line coordinates (x1, x2, y1, y2) are NEVER modified here.
-// Only: sweep removal, visibility, and label right-edge positioning.
+// UPDATE LOOP — sweep detection + visibility + label right-edge
+//
+// Lines are NEVER repositioned after creation.
+// Only label.x is moved (to current bar time = right edge of data).
+// To hide without deleting: use fully transparent color (INVIS).
+// Line width cannot be 0 in Pine — minimum is 1.
 // ════════════════════════════════════════════════════════════════
 i = 0
 while i < array.size(levels)
@@ -181,32 +199,31 @@ while i < array.size(levels)
             "MSSL" => show_mssl
             =>        false
         if show
-            line.set_color(lvl.ln, lvl.col)
-            line.set_style(lvl.ln, f_ls(lvl.lstyle))
-            line.set_width(lvl.ln, lw)
-            label.set_x(lvl.lbl, time)    // keeps label at right edge
-            label.set_color(lvl.lbl, color.new(lvl.col, 10))
+            line.set_color(lvl.ln,       lvl.col)
+            line.set_style(lvl.ln,       f_ls(lvl.lstyle))
+            line.set_width(lvl.ln,       lw)
+            label.set_x(lvl.lbl,         time)
+            label.set_color(lvl.lbl,     color.new(lvl.col, 10))
             label.set_textcolor(lvl.lbl, color.white)
-            label.set_size(lvl.lbl, f_lbsz(lb_sz))
+            label.set_size(lvl.lbl,      f_lbsz(lb_sz))
         else
-            line.set_color(lvl.ln, na)
-            line.set_width(lvl.ln, 0)
-            label.set_color(lvl.lbl, na)
-            label.set_textcolor(lvl.lbl, na)
+            line.set_color(lvl.ln,       INVIS)
+            line.set_width(lvl.ln,       1)   // width 0 is invalid — use 1 + transparent color
+            label.set_color(lvl.lbl,     INVIS)
+            label.set_textcolor(lvl.lbl, INVIS)
         i += 1
 
 // ════════════════════════════════════════════════════════════════
-// PDH / PDL  — separate var objects, recreated each day
+// PDH / PDL  — var objects, recreated at each new day
 // ════════════════════════════════════════════════════════════════
 var float cur_dhi   = na
-var int   cur_dhi_t = na   // time of bar where today's high was formed
+var int   cur_dhi_t = na
 var float cur_dlo   = na
 var int   cur_dlo_t = na
-
-var line  pdh_ln  = na
-var line  pdl_ln  = na
-var label pdh_lbl = na
-var label pdl_lbl = na
+var line  pdh_ln    = na
+var line  pdl_ln    = na
+var label pdh_lbl   = na
+var label pdl_lbl   = na
 
 bool new_day = ta.change(time("D")) != 0
 
@@ -218,7 +235,7 @@ if new_day
     int x_dh = na(cur_dhi_t) ? time : cur_dhi_t
     int x_dl = na(cur_dlo_t) ? time : cur_dlo_t
     if not na(d_hi)
-        pdh_ln  := line.new(x1=x_dh, y1=d_hi, x2=x_dh + bar_ms, y2=d_hi,
+        pdh_ln  := line.new(x1=x_dh, y1=d_hi, x2=x_dh + BAR_MS, y2=d_hi,
                             xloc=xloc.bar_time, extend=extend.right,
                             color=col_pdh, style=f_ls(ls_daily), width=lw)
         pdh_lbl := label.new(x=time, y=d_hi,
@@ -227,7 +244,7 @@ if new_day
                              color=color.new(col_pdh, 10), textcolor=color.white,
                              size=f_lbsz(lb_sz))
     if not na(d_lo)
-        pdl_ln  := line.new(x1=x_dl, y1=d_lo, x2=x_dl + bar_ms, y2=d_lo,
+        pdl_ln  := line.new(x1=x_dl, y1=d_lo, x2=x_dl + BAR_MS, y2=d_lo,
                             xloc=xloc.bar_time, extend=extend.right,
                             color=col_pdl, style=f_ls(ls_daily), width=lw)
         pdl_lbl := label.new(x=time, y=d_lo,
@@ -240,55 +257,54 @@ if new_day
     cur_dlo   := low
     cur_dlo_t := time
 else
-    if na(cur_dhi) or high >= cur_dhi
+    if na(cur_dhi) or high > cur_dhi
         cur_dhi   := high
         cur_dhi_t := time
-    if na(cur_dlo) or low <= cur_dlo
+    if na(cur_dlo) or low < cur_dlo
         cur_dlo   := low
         cur_dlo_t := time
 
 if not na(pdh_ln)
     label.set_x(pdh_lbl, time)
     if show_pdhl
-        line.set_color(pdh_ln, col_pdh)
-        line.set_style(pdh_ln, f_ls(ls_daily))
-        line.set_width(pdh_ln, lw)
-        label.set_color(pdh_lbl, color.new(col_pdh, 10))
+        line.set_color(pdh_ln,       col_pdh)
+        line.set_style(pdh_ln,       f_ls(ls_daily))
+        line.set_width(pdh_ln,       lw)
+        label.set_color(pdh_lbl,     color.new(col_pdh, 10))
         label.set_textcolor(pdh_lbl, color.white)
-        label.set_size(pdh_lbl, f_lbsz(lb_sz))
+        label.set_size(pdh_lbl,      f_lbsz(lb_sz))
     else
-        line.set_color(pdh_ln, na)
-        line.set_width(pdh_ln, 0)
-        label.set_color(pdh_lbl, na)
-        label.set_textcolor(pdh_lbl, na)
+        line.set_color(pdh_ln,       INVIS)
+        line.set_width(pdh_ln,       1)
+        label.set_color(pdh_lbl,     INVIS)
+        label.set_textcolor(pdh_lbl, INVIS)
 
 if not na(pdl_ln)
     label.set_x(pdl_lbl, time)
     if show_pdhl
-        line.set_color(pdl_ln, col_pdl)
-        line.set_style(pdl_ln, f_ls(ls_daily))
-        line.set_width(pdl_ln, lw)
-        label.set_color(pdl_lbl, color.new(col_pdl, 10))
+        line.set_color(pdl_ln,       col_pdl)
+        line.set_style(pdl_ln,       f_ls(ls_daily))
+        line.set_width(pdl_ln,       lw)
+        label.set_color(pdl_lbl,     color.new(col_pdl, 10))
         label.set_textcolor(pdl_lbl, color.white)
-        label.set_size(pdl_lbl, f_lbsz(lb_sz))
+        label.set_size(pdl_lbl,      f_lbsz(lb_sz))
     else
-        line.set_color(pdl_ln, na)
-        line.set_width(pdl_ln, 0)
-        label.set_color(pdl_lbl, na)
-        label.set_textcolor(pdl_lbl, na)
+        line.set_color(pdl_ln,       INVIS)
+        line.set_width(pdl_ln,       1)
+        label.set_color(pdl_lbl,     INVIS)
+        label.set_textcolor(pdl_lbl, INVIS)
 
 // ════════════════════════════════════════════════════════════════
-// PWH / PWL  — separate var objects, recreated each week
+// PWH / PWL  — var objects, recreated at each new week
 // ════════════════════════════════════════════════════════════════
 var float cur_whi   = na
 var int   cur_whi_t = na
 var float cur_wlo   = na
 var int   cur_wlo_t = na
-
-var line  pwh_ln  = na
-var line  pwl_ln  = na
-var label pwh_lbl = na
-var label pwl_lbl = na
+var line  pwh_ln    = na
+var line  pwl_ln    = na
+var label pwh_lbl   = na
+var label pwl_lbl   = na
 
 bool new_week = ta.change(time("W")) != 0
 
@@ -300,7 +316,7 @@ if new_week
     int x_wh = na(cur_whi_t) ? time : cur_whi_t
     int x_wl = na(cur_wlo_t) ? time : cur_wlo_t
     if not na(w_hi)
-        pwh_ln  := line.new(x1=x_wh, y1=w_hi, x2=x_wh + bar_ms, y2=w_hi,
+        pwh_ln  := line.new(x1=x_wh, y1=w_hi, x2=x_wh + BAR_MS, y2=w_hi,
                             xloc=xloc.bar_time, extend=extend.right,
                             color=col_wkh, style=f_ls(ls_daily), width=lw)
         pwh_lbl := label.new(x=time, y=w_hi,
@@ -309,7 +325,7 @@ if new_week
                              color=color.new(col_wkh, 10), textcolor=color.white,
                              size=f_lbsz(lb_sz))
     if not na(w_lo)
-        pwl_ln  := line.new(x1=x_wl, y1=w_lo, x2=x_wl + bar_ms, y2=w_lo,
+        pwl_ln  := line.new(x1=x_wl, y1=w_lo, x2=x_wl + BAR_MS, y2=w_lo,
                             xloc=xloc.bar_time, extend=extend.right,
                             color=col_wkl, style=f_ls(ls_daily), width=lw)
         pwl_lbl := label.new(x=time, y=w_lo,
@@ -322,39 +338,39 @@ if new_week
     cur_wlo   := low
     cur_wlo_t := time
 else
-    if na(cur_whi) or high >= cur_whi
+    if na(cur_whi) or high > cur_whi
         cur_whi   := high
         cur_whi_t := time
-    if na(cur_wlo) or low <= cur_wlo
+    if na(cur_wlo) or low < cur_wlo
         cur_wlo   := low
         cur_wlo_t := time
 
 if not na(pwh_ln)
     label.set_x(pwh_lbl, time)
     if show_wkhl
-        line.set_color(pwh_ln, col_wkh)
-        line.set_style(pwh_ln, f_ls(ls_daily))
-        line.set_width(pwh_ln, lw)
-        label.set_color(pwh_lbl, color.new(col_wkh, 10))
+        line.set_color(pwh_ln,       col_wkh)
+        line.set_style(pwh_ln,       f_ls(ls_daily))
+        line.set_width(pwh_ln,       lw)
+        label.set_color(pwh_lbl,     color.new(col_wkh, 10))
         label.set_textcolor(pwh_lbl, color.white)
-        label.set_size(pwh_lbl, f_lbsz(lb_sz))
+        label.set_size(pwh_lbl,      f_lbsz(lb_sz))
     else
-        line.set_color(pwh_ln, na)
-        line.set_width(pwh_ln, 0)
-        label.set_color(pwh_lbl, na)
-        label.set_textcolor(pwh_lbl, na)
+        line.set_color(pwh_ln,       INVIS)
+        line.set_width(pwh_ln,       1)
+        label.set_color(pwh_lbl,     INVIS)
+        label.set_textcolor(pwh_lbl, INVIS)
 
 if not na(pwl_ln)
     label.set_x(pwl_lbl, time)
     if show_wkhl
-        line.set_color(pwl_ln, col_wkl)
-        line.set_style(pwl_ln, f_ls(ls_daily))
-        line.set_width(pwl_ln, lw)
-        label.set_color(pwl_lbl, color.new(col_wkl, 10))
+        line.set_color(pwl_ln,       col_wkl)
+        line.set_style(pwl_ln,       f_ls(ls_daily))
+        line.set_width(pwl_ln,       lw)
+        label.set_color(pwl_lbl,     color.new(col_wkl, 10))
         label.set_textcolor(pwl_lbl, color.white)
-        label.set_size(pwl_lbl, f_lbsz(lb_sz))
+        label.set_size(pwl_lbl,      f_lbsz(lb_sz))
     else
-        line.set_color(pwl_ln, na)
-        line.set_width(pwl_ln, 0)
-        label.set_color(pwl_lbl, na)
-        label.set_textcolor(pwl_lbl, na)
+        line.set_color(pwl_ln,       INVIS)
+        line.set_width(pwl_ln,       1)
+        label.set_color(pwl_lbl,     INVIS)
+        label.set_textcolor(pwl_lbl, INVIS)
