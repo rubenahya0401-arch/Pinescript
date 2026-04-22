@@ -83,14 +83,16 @@ f_evict(string cat) =>
     int  oldest_i = -1
     int  oldest_t = 0
     bool found    = false
-    for i = 0 to array.size(levels) - 1
-        lvl = array.get(levels, i)
-        if lvl.cat == cat
-            cnt += 1
-            if not found or lvl.x1 < oldest_t
-                oldest_t := lvl.x1
-                oldest_i := i
-                found    := true
+    int  n        = array.size(levels)
+    if n > 0
+        for i = 0 to n - 1
+            lvl = array.get(levels, i)
+            if lvl.cat == cat
+                cnt += 1
+                if not found or lvl.x1 < oldest_t
+                    oldest_t := lvl.x1
+                    oldest_i := i
+                    found    := true
     if cnt >= max_lvl and oldest_i >= 0
         old = array.get(levels, oldest_i)
         line.delete(old.ln)
