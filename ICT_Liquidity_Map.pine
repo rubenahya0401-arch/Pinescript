@@ -13,6 +13,7 @@ show_pdhl  = input.bool(true,  "PDH / PDL",                     group="Visibilit
 show_wkhl  = input.bool(false, "PWH / PWL",                     group="Visibility")
 show_tf    = input.bool(true,  "TF tag in labels",              group="Visibility")
 show_price = input.bool(true,  "Price in labels",               group="Visibility")
+show_hc    = input.bool(true,  "Health Check Status",           group="Visibility")
 
 reh_tol  = input.float(0.05, "REH/REL Tolerance (%)",
      minval=0.0, maxval=2.0, step=0.01, group="Detection")
@@ -378,3 +379,21 @@ if not na(pwl_ln)
         line.set_width(pwl_ln,       1)
         label.set_color(pwl_lbl,     INVIS)
         label.set_textcolor(pwl_lbl, INVIS)
+
+// ════════════════════════════════════════════════════════════════
+// HEALTH CHECK — confirms TradingView data feed is connected
+// Shows a status table in the top-right corner on the last bar.
+// Green  = live realtime feed connected.
+// Yellow = replay / historical data (no live feed).
+// ════════════════════════════════════════════════════════════════
+tv_health_check() =>
+    connected = barstate.isrealtime
+    status_txt = connected ? "● TV Connected" : "◌ Historical"
+    bg_col     = connected ? color.new(color.green, 20) : color.new(color.orange, 20)
+    var table hc_tbl = table.new(position.top_right, 1, 1, border_width=1)
+    table.cell(hc_tbl, 0, 0, status_txt,
+               text_color=color.white, text_size=size.small,
+               bgcolor=bg_col)
+
+if show_hc and barstate.islast
+    tv_health_check()
